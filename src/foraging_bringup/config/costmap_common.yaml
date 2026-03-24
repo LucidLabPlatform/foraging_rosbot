@@ -1,0 +1,36 @@
+# Reff: http://wiki.ros.org/costmap_2d
+global_frame: map
+robot_base_frame: base_link
+footprint: [[0.14, 0.14], [0.14, -0.14], [-0.14, -0.14], [-0.14, 0.14]]
+rolling_window: true
+inflation_radius: 0.5
+cost_scaling_factor: 4.0
+track_unknown_space: true
+
+# costmap_common.yaml — add this
+plugins:
+  - {name: static_layer,    type: "costmap_2d::StaticLayer"}
+  - {name: obstacle_layer,  type: "costmap_2d::ObstacleLayer"}
+  - {name: inflation_layer, type: "costmap_2d::InflationLayer"}
+  
+observation_sources: scan puck_cloud
+
+scan:
+  sensor_frame: laser
+  data_type: LaserScan
+  topic: scan
+  marking: true
+  clearing: true
+ 
+puck_cloud:
+  topic: /puck/as_obstacles
+  data_type: PointCloud2
+  sensor_frame: map
+  observation_persistence: 3.0
+  expected_update_rate: 0.0      # 0 = disable staleness warning
+  max_obstacle_height: 0.4
+  min_obstacle_height: 0.0
+  obstacle_range: 20.0           # large — accept points anywhere on the map
+  raytrace_range: 0.0            # CRITICAL: no raytrace for synthetic sources
+  clearing: false
+  marking: true
