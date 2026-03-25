@@ -13,7 +13,7 @@ GRIPPER_OPEN = 0
 GRIPPER_CLOSE = 140
 
 
-def move_forward(distance=0.2, speed=0.1):
+def move_forward(distance=0.1, speed=0.1):
     if speed <= 0:
         rospy.logerr("Speed must be > 0")
         return

@@ -53,6 +53,10 @@ add_message_files(
   RawPuckDetected.msg
   PuckDetected.msg
   PuckRegistry.msg
+  ArucoConfirmed.msg
+  RawArucoDetected.msg
+  ArucoDetected.msg
+  ArucoRegistry.msg
 )
 
 ## Generate services in the 'srv' folder

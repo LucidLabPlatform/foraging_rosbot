@@ -17,7 +17,7 @@ from foraging_msgs.msg import PuckRegistry
 from sensor_msgs.msg import PointCloud2, PointField
 from std_msgs.msg import Header
 
-PUCK_RADIUS   = 0.20   # metres — inflate this if the robot still clips pucks
+PUCK_RADIUS   = 0.10   # metres — inflate this if the robot still clips pucks
 POINT_SPACING = 0.01   # grid resolution inside the disc
 POINT_Z       = 0.0   # must be > min_obstacle_height (0.0) and < max_obstacle_height (0.5)
 
