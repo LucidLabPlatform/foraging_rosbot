@@ -2,7 +2,7 @@
 """
 ArUco TF broadcaster node.
 
-Maintains odom -> aruco_<marker_id> TF frames for all confirmed markers.
+Maintains map -> aruco_<marker_id> TF frames for all confirmed markers.
 
 On /aruco/registry: replaces the full known-marker dict and immediately
                     broadcasts all frames. Topic is latched so late-joiners
@@ -14,7 +14,7 @@ Subscribes:
   /aruco/registry  (foraging_msgs/ArucoRegistry)
 
 Broadcasts TF:
-  odom -> aruco_<marker_id>  for every confirmed marker
+  map -> aruco_<marker_id>  for every confirmed marker
 """
 
 import rospy
@@ -25,7 +25,7 @@ import tf2_ros
 from geometry_msgs.msg import TransformStamped
 
 # ─── Parameters ───────────────────────────────────────────────────────────────
-FIXED_FRAME    = "odom"
+FIXED_FRAME    = "map"
 BROADCAST_RATE = 10.0   # Hz
 
 # ─── State ────────────────────────────────────────────────────────────────────

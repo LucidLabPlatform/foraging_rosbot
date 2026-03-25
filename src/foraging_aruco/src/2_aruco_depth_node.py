@@ -16,7 +16,7 @@ import cv2
 from sensor_msgs.msg import CompressedImage
 from foraging_msgs.msg import RawArucoDetected, ArucoDetected
 
-DEBUG = True
+DEBUG = False
 
 pending_markers = []   # RawArucoDetected msgs waiting for a depth frame
 publisher_aruco = None

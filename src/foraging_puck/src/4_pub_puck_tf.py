@@ -2,7 +2,7 @@
 """
 Puck TF broadcaster node.
 
-Maintains odom -> puck_<id> TF frames for all confirmed pucks.
+Maintains map -> puck_<id> TF frames for all confirmed pucks.
 
 On /puck/registry: replaces the full known-puck dict and immediately broadcasts
                    all frames. Because the topic is latched, a late-joining node
@@ -14,7 +14,7 @@ Subscribes:
   /puck/registry  (foraging_msgs/PuckRegistry)
 
 Broadcasts TF:
-  odom -> puck_<id>  for every confirmed puck
+  map -> puck_<id>  for every confirmed puck
 """
 
 import rospy
@@ -25,7 +25,7 @@ import tf2_ros
 from geometry_msgs.msg import TransformStamped
 
 # ─── Parameters ──────────────────────────────────────────────────────────────
-FIXED_FRAME    = "odom"
+FIXED_FRAME    = "map"
 BROADCAST_RATE = 10.0   # Hz
 
 # ─── State ───────────────────────────────────────────────────────────────────

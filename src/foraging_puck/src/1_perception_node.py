@@ -2,8 +2,8 @@
 """
 Publishes foraging_msgs/RawPuckDetected with:
  - header (copied from color image msg)
- - center_x (image pixel coordinates)
- - center_y (image pixel coordinates)
+ - center_x (image pixel coordinates, in FULL image space)
+ - center_y (image pixel coordinates, in FULL image space)
  - color (0=red,1=green,2=blue)
 """
 
@@ -18,29 +18,29 @@ bridge = CvBridge()
 
 # HSV bounds (tune with `python3 0_calibrate_HSV.py`)
 DEBUG_VISUALS = True
-MIN_CONTOUR_AREA = 200  # Minimum area of contour to be considered a puck
-MAX_CONTOUR_AREA = 5000 # Maximum area of contour to be considered a puck
+CROP_TOP_FRACTION = 0.5     # Discard this fraction from the top of the image
+MIN_CONTOUR_AREA = 200      # Minimum area of contour to be considered a puck
+MAX_CONTOUR_AREA = 5000     # Maximum area of contour to be considered a puck
 HSV_BOUNDS = {
-    "red": (np.array([165, 105, 0]),  np.array([180, 255, 255])),
-    "green": (np.array([35, 100, 0]),  np.array([80, 255, 255])),
-    "blue":  (np.array([90, 160, 0]), np.array([130, 255, 255])),
+    "red":   (np.array([165, 105,   0]), np.array([180, 255, 255])),
+    "green": (np.array([ 35, 100,   0]), np.array([ 80, 255, 255])),
+    "blue":  (np.array([ 90, 160,   0]), np.array([130, 255, 255])),
 }
 KERNEL = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
-
 
 
 def publish_detection(header, cx, cy, color_id):
     global publisher_puck_center
     msg_puck_center = RawPuckDetected()
-    msg_puck_center.header = header
+    msg_puck_center.header   = header
     msg_puck_center.center_x = float(cx)
     msg_puck_center.center_y = float(cy)
-    msg_puck_center.color = int(color_id)
+    msg_puck_center.color    = int(color_id)
     publisher_puck_center.publish(msg_puck_center)
 
 
 def preprocess_mask(mask):
-    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, KERNEL, iterations=1)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN,  KERNEL, iterations=1)
     mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, KERNEL, iterations=1)
     mask = cv2.GaussianBlur(mask, (5, 5), 0)
     _, mask = cv2.threshold(mask, 50, 255, cv2.THRESH_BINARY)
@@ -49,19 +49,17 @@ def preprocess_mask(mask):
 
 def detect_color_pucks(hsv_img, color_name, max_pucks=3):
     """
-    Returns a list of (contour, cX, cY) for up to max_pucks detections.
-    Returns (detections, mask) where detections may be empty.
+    Returns (detections, mask).
+    detections is a list of (contour, cX, cY) — coordinates in the CROPPED image.
     """
     low, high = HSV_BOUNDS[color_name]
     mask = cv2.inRange(hsv_img, low, high)
-
     mask = preprocess_mask(mask)
-    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
+    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     if not contours:
         return [], mask
 
-    # Filter by area and circularity, then sort by area descending
     valid = []
     for c in contours:
         area = cv2.contourArea(c)
@@ -75,7 +73,6 @@ def detect_color_pucks(hsv_img, color_name, max_pucks=3):
             continue
         valid.append((area, c))
 
-    # Pick the top max_pucks by area
     valid.sort(key=lambda x: x[0], reverse=True)
     valid = valid[:max_pucks]
 
@@ -94,13 +91,21 @@ def detect_color_pucks(hsv_img, color_name, max_pucks=3):
 def callback_color(msg: CompressedImage):
     header = msg.header
     img = bridge.compressed_imgmsg_to_cv2(msg, desired_encoding="bgr8")
+
+    # --- Crop: keep only the bottom (1 - CROP_TOP_FRACTION) of the image ---
+    full_h = img.shape[0]
+    crop_y = int(full_h * CROP_TOP_FRACTION)
+    img = img[crop_y:, :]
+    # ---------------------------------------------------------------------
+
     hsv_img = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
 
     for color_name, color_id in [("red", 0), ("green", 1), ("blue", 2)]:
         detections, mask = detect_color_pucks(hsv_img, color_name, max_pucks=3)
 
         for contour, cx, cy in detections:
-            publish_detection(header, cx, cy, color_id)
+            # Offset cy back to full-image coordinates before publishing
+            publish_detection(header, cx, cy + crop_y, color_id)
 
             if DEBUG_VISUALS:
                 cv2.circle(img, (cx, cy), 2, (0, 255, 0), -1)
@@ -114,14 +119,11 @@ def callback_color(msg: CompressedImage):
         cv2.waitKey(1)
 
 
-
-
 def main():
     global publisher_puck_center
     rospy.init_node("perception_node")
     publisher_puck_center = rospy.Publisher('/puck/detected/raw', RawPuckDetected, queue_size=4)
     rospy.Subscriber("/camera/color/image_2fps/compressed", CompressedImage, callback_color, queue_size=1)
-
     rospy.spin()
     cv2.destroyAllWindows()
 

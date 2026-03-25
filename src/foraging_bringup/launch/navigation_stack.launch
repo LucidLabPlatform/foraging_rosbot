@@ -37,7 +37,6 @@
     <!-- ===== put pucks TF as obsticles ===== -->
     <node pkg="foraging_puck" type="5_puck_obsticle_publisher.py" name="puck_obstacle_publisher"  output="screen">
     </node>
-
     <!-- ==== find aruco ===== -->
     <node pkg="foraging_aruco" type="1_aruco_perception_node.py" name="aruco_perception_node"  output="screen"> 
     </node>
@@ -47,6 +46,7 @@
     </node>
     <node pkg="foraging_aruco" type="4_pub_aruco_tf.py" name="aruco_tf_broadcaster_node"  output="screen">
     </node>
+    
     <!-- ===== while conditions not satisfied -> move around random, explore, find pucks, and corners ===== -->
     <!-- ===== when conditions satisfied -> go grab pucks one by one and bring them to their respective homes ===== -->
     <!-- ===== put pucks TF as obsticles ===== -->

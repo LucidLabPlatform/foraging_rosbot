@@ -2,7 +2,7 @@
 """
 Puck localization node.
 
-- Backprojects /puck/detected (pixel + depth) into 3D odom frame
+- Backprojects /puck/detected (pixel + depth) into 3D map frame
 - Clusters observations to deduplicate; assigns each unique puck a stable ID
 - Publishes /puck/confirmed ONCE when a puck is first confirmed
 - Publishes /puck/registry (PuckRegistry) on every confirmation — full list of
@@ -35,7 +35,7 @@ fx = fy = cx = cy = None
 tf_buffer   = None
 tf_listener = None
 
-FIXED_FRAME = "odom"
+FIXED_FRAME = "map"
 TF_TIMEOUT  = rospy.Duration(0.15)
 
 # ─── Clustering / confirmation params ────────────────────────────────────────
@@ -128,7 +128,7 @@ def backproject(u, v, depth_m):
     return (X, Y, Z)
 
 
-def transform_to_odom(X, Y, Z, stamp, camera_frame):
+def transform_to_map(X, Y, Z, stamp, camera_frame):
     ps = PointStamped()
     ps.header.stamp    = stamp
     ps.header.frame_id = camera_frame
@@ -173,10 +173,10 @@ def callback_detected(msg: PuckDetected):
     if cam_pt is None:
         return
 
-    # 2. Transform to odom frame
-    odom_pt = transform_to_odom(
+    # 2. Transform to map frame
+    map_pt = transform_to_map(
         cam_pt[0], cam_pt[1], cam_pt[2], msg.header.stamp, cam_frame)
-    if odom_pt is None:
+    if map_pt is None:
         return
 
     color = int(msg.color)
@@ -187,7 +187,7 @@ def callback_detected(msg: PuckDetected):
     for i, p in enumerate(pucks):
         if p["color"] != color:
             continue
-        d = dist3(odom_pt, (p["x"], p["y"], p["z"]))
+        d = dist3(map_pt, (p["x"], p["y"], p["z"]))
         if d <= CLUSTER_R and d < best_d:
             best_d, best_i = d, i
 
@@ -198,9 +198,9 @@ def callback_detected(msg: PuckDetected):
             "color":     color,
             "hits":      1,
             "confirmed": False,
-            "x":         odom_pt[0],
-            "y":         odom_pt[1],
-            "z":         odom_pt[2],
+            "x":         map_pt[0],
+            "y":         map_pt[1],
+            "z":         map_pt[2],
             "last_seen": rospy.Time.now(),
         })
         next_id += 1
@@ -208,9 +208,9 @@ def callback_detected(msg: PuckDetected):
 
     # 4b. Merge observation into existing cluster via EWMA
     p = pucks[best_i]
-    p["x"] = EWMA_ALPHA * odom_pt[0] + (1 - EWMA_ALPHA) * p["x"]
-    p["y"] = EWMA_ALPHA * odom_pt[1] + (1 - EWMA_ALPHA) * p["y"]
-    p["z"] = EWMA_ALPHA * odom_pt[2] + (1 - EWMA_ALPHA) * p["z"]
+    p["x"] = EWMA_ALPHA * map_pt[0] + (1 - EWMA_ALPHA) * p["x"]
+    p["y"] = EWMA_ALPHA * map_pt[1] + (1 - EWMA_ALPHA) * p["y"]
+    p["z"] = EWMA_ALPHA * map_pt[2] + (1 - EWMA_ALPHA) * p["z"]
     p["hits"] += 1
     p["last_seen"] = rospy.Time.now()
 

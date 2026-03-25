@@ -2,7 +2,7 @@
 """
 ArUco marker localization node.
 
-- Backprojects /aruco/detected (pixel + depth) into 3D odom frame
+- Backprojects /aruco/detected (pixel + depth) into 3D map frame
 - Clusters observations by marker_id; each unique marker_id is its own track
 - Publishes /aruco/confirmed ONCE when a marker is first confirmed
 - Publishes /aruco/registry (ArucoRegistry) on every confirmation — full list,
@@ -35,7 +35,7 @@ fx = fy = cx = cy = None
 tf_buffer   = None
 tf_listener = None
 
-FIXED_FRAME = "odom"
+FIXED_FRAME = "map"
 TF_TIMEOUT  = rospy.Duration(0.15)
 
 # ─── Clustering / confirmation params ────────────────────────────────────────
@@ -122,7 +122,7 @@ def backproject(u, v, depth_m):
     return (X, Y, Z)
 
 
-def transform_to_odom(X, Y, Z, stamp, camera_frame):
+def transform_to_map(X, Y, Z, stamp, camera_frame):
     ps = PointStamped()
     ps.header.stamp    = stamp
     ps.header.frame_id = camera_frame
@@ -164,9 +164,9 @@ def callback_detected(msg: ArucoDetected):
     if cam_pt is None:
         return
 
-    odom_pt = transform_to_odom(
+    map_pt = transform_to_map(
         cam_pt[0], cam_pt[1], cam_pt[2], msg.header.stamp, cam_frame)
-    if odom_pt is None:
+    if map_pt is None:
         return
 
     marker_id = int(msg.marker_id)
@@ -181,18 +181,18 @@ def callback_detected(msg: ArucoDetected):
             "marker_id": marker_id,
             "hits":      1,
             "confirmed": False,
-            "x":         odom_pt[0],
-            "y":         odom_pt[1],
-            "z":         odom_pt[2],
+            "x":         map_pt[0],
+            "y":         map_pt[1],
+            "z":         map_pt[2],
             "last_seen": rospy.Time.now(),
         })
         next_id += 1
         return
 
     # Merge observation into existing track via EWMA
-    track["x"] = EWMA_ALPHA * odom_pt[0] + (1 - EWMA_ALPHA) * track["x"]
-    track["y"] = EWMA_ALPHA * odom_pt[1] + (1 - EWMA_ALPHA) * track["y"]
-    track["z"] = EWMA_ALPHA * odom_pt[2] + (1 - EWMA_ALPHA) * track["z"]
+    track["x"] = EWMA_ALPHA * map_pt[0] + (1 - EWMA_ALPHA) * track["x"]
+    track["y"] = EWMA_ALPHA * map_pt[1] + (1 - EWMA_ALPHA) * track["y"]
+    track["z"] = EWMA_ALPHA * map_pt[2] + (1 - EWMA_ALPHA) * track["z"]
     track["hits"] += 1
     track["last_seen"] = rospy.Time.now()
 
