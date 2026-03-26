@@ -28,7 +28,7 @@ from foraging_msgs.srv import CenterPuckServerMessage, CenterPuckServerMessageRe
 DEBUG               = True
 CROP_TOP_FRACTION   = 0.5
 
-MIN_CONTOUR_AREA    = 100
+MIN_CONTOUR_AREA    = 200
 MAX_CONTOUR_AREA    = 10000
 
 Kp = 0.004
