@@ -10,7 +10,7 @@ from geometry_msgs.msg import Twist
 from foraging_msgs.srv import PickPuckServerMessage, PickPuckServerMessageResponse
 
 GRIPPER_OPEN = 0
-GRIPPER_CLOSE = 140
+GRIPPER_CLOSE = 170
 
 
 def move_forward(distance=0.1, speed=0.1):
@@ -18,6 +18,7 @@ def move_forward(distance=0.1, speed=0.1):
         rospy.logerr("Speed must be > 0")
         return
 
+    distance += 0.05
     duration = distance / speed
     cmd_vel_msg = Twist()
     rate = rospy.Rate(10)

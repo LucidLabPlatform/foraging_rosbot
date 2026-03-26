@@ -44,9 +44,9 @@ SEARCH_ANGLE_RAD             = 0.5 # around 30 degrees
 NO_PUCK_FRAMES_BEFORE_SEARCH = 10            # consecutive no-detection frames before triggering sweep
 
 COLOR_NAMES = {0: "red", 1: "green", 2: "blue"}
-HSV_BOUNDS  = {
+HSV_BOUNDS = {
     "red":   (np.array([165, 105,   0]), np.array([180, 255, 255])),
-    "green": (np.array([ 35, 100,   0]), np.array([ 80, 255, 255])),
+    "green": (np.array([ 35, 20,   0]), np.array([ 80, 255, 255])),
     "blue":  (np.array([ 90, 160,   0]), np.array([130, 255, 255])),
 }
 KERNEL = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))

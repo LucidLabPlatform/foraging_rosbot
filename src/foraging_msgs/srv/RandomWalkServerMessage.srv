@@ -1,0 +1,3 @@
+int32 num_pucks_to_find
+---
+bool done      # find the pucks he need to find

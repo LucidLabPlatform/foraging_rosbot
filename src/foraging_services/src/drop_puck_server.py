@@ -10,7 +10,7 @@ from geometry_msgs.msg import Twist
 from foraging_msgs.srv import DropPuckServerMessage, DropPuckServerMessageResponse
 
 GRIPPER_OPEN = 0
-GRIPPER_CLOSE = 140
+GRIPPER_CLOSE = 170
 
 
 def move_backward(distance=0.1, speed=0.1):
