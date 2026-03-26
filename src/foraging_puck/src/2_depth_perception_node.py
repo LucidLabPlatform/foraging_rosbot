@@ -20,7 +20,10 @@ from sensor_msgs.msg import CompressedImage
 from foraging_msgs.msg import RawPuckDetected, PuckDetected
 
 DEBUG = True
-CROP_TOP_FRACTION = 0.5     # Must match perception_node.py
+CROP_TOP_FRACTION    = 0.5   # Must match perception_node.py
+BOTTOM_STRIP_FRACTION = 0.3  # Sample bottom 30% of bbox height
+DEPTH_CLUSTER_TOL_MM  = 150  # Readings within 150mm are considered the same surface
+MIN_CLUSTER_SAMPLES   = 5    # Minimum readings in dominant cluster to trust the depth
 
 pending_pucks = []
 publisher_puck = None
@@ -60,32 +63,48 @@ def callback_depth(msg: CompressedImage):
         display = cv2.applyColorMap(display, cv2.COLORMAP_JET)
 
     for puck in to_process:
-        # center_x/y are in full-image space — remap cy into cropped space
-        cx = int(np.clip(puck.center_x, 0, w - 1))
-        cy_full = int(puck.center_y)
+        # Bounding box is in full-image space — remap y into cropped space
+        bbox_x = int(np.clip(puck.bbox_x, 0, w - 1))
+        bbox_w = int(np.clip(puck.bbox_w, 1, w - bbox_x))
+        bbox_bottom_full = int(puck.bbox_y) + int(puck.bbox_h)
 
-        # Skip pucks that were somehow above the crop line (shouldn't happen,
-        # but guards against stale messages)
-        if cy_full < crop_y:
-            rospy.logwarn_throttle(2, f"Puck cy={cy_full} is above crop line {crop_y} — skipping")
+        if bbox_bottom_full < crop_y:
+            rospy.logwarn_throttle(2, f"Puck bbox is above crop line — skipping")
             continue
 
-        cy = int(np.clip(cy_full - crop_y, 0, cropped_h - 1))
+        bbox_bottom = int(np.clip(bbox_bottom_full - crop_y, 0, cropped_h))
+        strip_top   = max(0, bbox_bottom - int(puck.bbox_h * BOTTOM_STRIP_FRACTION))
 
-        # 5 px patch median — robust to depth holes
-        PATCH = 5
-        patch = depth_cropped[max(0, cy - PATCH):min(cropped_h, cy + PATCH),
-                               max(0, cx - PATCH):min(w,         cx + PATCH)]
-        valid = patch[patch > 0]
+        # Sample bottom strip of the bounding box
+        strip = depth_cropped[strip_top:bbox_bottom, bbox_x:bbox_x + bbox_w]
+        valid = strip[strip > 0].flatten()
 
-        distance_mm = float(np.median(valid)) if valid.size > 0 else 0.0
+        # Find the largest cluster of similar depths
+        valid_sorted = np.sort(valid)
+        best_cluster = np.array([])
+        for i in range(len(valid_sorted)):
+            cluster = valid_sorted[
+                (valid_sorted >= valid_sorted[i]) &
+                (valid_sorted <= valid_sorted[i] + DEPTH_CLUSTER_TOL_MM)
+            ]
+            if len(cluster) > len(best_cluster):
+                best_cluster = cluster
+
+        if len(best_cluster) < MIN_CLUSTER_SAMPLES:
+            rospy.logwarn_throttle(2, f"No dominant depth surface ({len(best_cluster)} samples) — skipping")
+            continue
+
+        distance_mm = float(np.mean(best_cluster))
 
         if not (100 < distance_mm < 2000):
             rospy.logwarn_throttle(2, f"Depth out of range {distance_mm:.0f}mm — skipping")
             continue
 
+        cx = int(np.clip(puck.center_x, 0, w - 1))
+        cy_full = int(puck.center_y)
+
         distance_m = distance_mm / 1000.0
-        rospy.loginfo(f"Puck color={puck.color} at ({cx},{cy}) → {distance_m:.3f}m")
+        rospy.loginfo(f"Puck color={puck.color} at ({cx},{cy_full}) → {distance_m:.3f}m")
 
         out          = PuckDetected()
         out.header   = puck.header
@@ -96,9 +115,10 @@ def callback_depth(msg: CompressedImage):
         publisher_puck.publish(out)
 
         if DEBUG:
+            cy_cropped = int(np.clip(cy_full - crop_y, 0, cropped_h - 1))
             color_bgr = COLOR_BGR.get(puck.color, (255, 255, 255))
-            cv2.circle(display, (cx, cy), 6, color_bgr, -1)
-            cv2.putText(display, f"{distance_m:.2f}m", (cx + 8, cy - 6),
+            cv2.circle(display, (cx, cy_cropped), 6, color_bgr, -1)
+            cv2.putText(display, f"{distance_m:.2f}m", (cx + 8, cy_cropped - 6),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.5, color_bgr, 2)
 
     if DEBUG:
