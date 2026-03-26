@@ -111,61 +111,69 @@ def find_puck_cx(hsv_crop, color_name):
     return int(M["m10"] / M["m00"])
 
 
-def _rotate_until_puck(angular_z, duration_s, color_name):
-    """
-    Rotate at angular_z rad/s for up to duration_s seconds.
-    Stops early and returns True as soon as the puck is detected in a frame.
-    Returns False if the full duration elapses without detection.
-    """
+def _rotate_step(angular_z):
+    """Rotate by SEARCH_ANGLE_RAD at SEARCH_ANGULAR_SPEED, then stop."""
+    duration = SEARCH_ANGLE_RAD / SEARCH_ANGULAR_SPEED
     t = Twist()
     t.angular.z = angular_z
-    end = rospy.Time.now() + rospy.Duration(duration_s)
-
+    end = rospy.Time.now() + rospy.Duration(duration)
     while rospy.Time.now() < end and not rospy.is_shutdown():
         cmd_vel_pub.publish(t)
-        try:
-            msg = rospy.wait_for_message(
-                "/camera/color/image_2fps/compressed",
-                CompressedImage,
-                timeout=0.6,
-            )
-            img = bridge.compressed_imgmsg_to_cv2(msg, desired_encoding="bgr8")
-            h, _ = img.shape[:2]
-            crop_y = int(h * CROP_TOP_FRACTION)
-            hsv_crop = cv2.cvtColor(img[crop_y:, :], cv2.COLOR_BGR2HSV)
-            if find_puck_cx(hsv_crop, color_name) is not None:
-                cmd_vel_pub.publish(Twist())
-                return True
-        except rospy.ROSException:
-            pass  # timeout waiting for frame — keep rotating
-
+        rospy.sleep(0.05)
     cmd_vel_pub.publish(Twist())
-    return False
+
+
+def _puck_visible(color_name):
+    """Grab one camera frame and return True if the puck is detected."""
+    try:
+        msg = rospy.wait_for_message(
+            "/camera/color/image_2fps/compressed",
+            CompressedImage,
+            timeout=1.0,
+        )
+        img = bridge.compressed_imgmsg_to_cv2(msg, desired_encoding="bgr8")
+        h, _ = img.shape[:2]
+        crop_y = int(h * CROP_TOP_FRACTION)
+        hsv_crop = cv2.cvtColor(img[crop_y:, :], cv2.COLOR_BGR2HSV)
+        return find_puck_cx(hsv_crop, color_name) is not None
+    except rospy.ROSException:
+        return False
 
 
 def search_sweep(color_name):
     """
     Called when the puck is not in the robot's FOV.
-    Performs a 60° sweep to scan for the puck and stops the moment it is
-    detected, returning True so the caller can resume normal centering.
+    Rotates in discrete steps (rotate → stop → check), covering 60° total,
+    then returns to the original heading.
 
-    Sweep pattern (returns to original heading if puck not found):
-        0°  → –30° (30° CW)
-        –30° → +30° (60° CCW)
-        +30° → 0°  (30° CW, back to start)
+    Sweep pattern:
+        0°  → –30° (1 step CW)   → check
+        –30° → 0°  (1 step CCW)  → check
+        0°  → +30° (1 step CCW)  → check
+        +30° → 0°  (1 step CW)   → back to start (no check needed)
+
+    Returns True as soon as the puck is spotted, False if never found.
     """
-    step_s = SEARCH_ANGLE_RAD / SEARCH_ANGULAR_SPEED   # seconds per 30°
+    rospy.loginfo("center_puck: puck not in FOV — starting search sweep")
 
-    rospy.loginfo("center_puck: puck not in FOV — sweeping 30° CW")
-    if _rotate_until_puck(-SEARCH_ANGULAR_SPEED, step_s, color_name):
+    # Step 1: rotate 30° CW, then check
+    _rotate_step(-SEARCH_ANGULAR_SPEED)
+    if _puck_visible(color_name):
         return True
 
-    rospy.loginfo("center_puck: sweeping 60° CCW")
-    if _rotate_until_puck(SEARCH_ANGULAR_SPEED, step_s * 2, color_name):
+    # Step 2: rotate 30° CCW back to start, then check
+    _rotate_step(SEARCH_ANGULAR_SPEED)
+    if _puck_visible(color_name):
         return True
 
+    # Step 3: rotate 30° CCW past start, then check
+    _rotate_step(SEARCH_ANGULAR_SPEED)
+    if _puck_visible(color_name):
+        return True
+
+    # Not found — rotate 30° CW back to original heading
     rospy.loginfo("center_puck: puck not found — returning to original heading")
-    _rotate_until_puck(-SEARCH_ANGULAR_SPEED, step_s, color_name)
+    _rotate_step(-SEARCH_ANGULAR_SPEED)
     return False
 
 
