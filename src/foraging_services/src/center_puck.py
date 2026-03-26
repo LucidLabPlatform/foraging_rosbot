@@ -15,6 +15,7 @@ The service returns success once the puck stays aligned for
 ALIGN_STABLE_FRAMES consecutive frames, or False on timeout.
 '''
 
+import math
 import rospy
 import numpy as np
 import cv2
@@ -36,8 +37,11 @@ Kd = 0.002
 MAX_ANGULAR_Z       = 0.8
 
 ALIGN_TOLERANCE_PX  = 20    # within this many px = aligned
-ALIGN_STABLE_FRAMES = 5     # consecutive aligned frames to declare success
 SERVICE_TIMEOUT_S   = 15.0
+
+SEARCH_ANGULAR_SPEED         = 0.5           # rad/s for the search sweep
+SEARCH_ANGLE_RAD             = 0.5 # around 30 degrees
+NO_PUCK_FRAMES_BEFORE_SEARCH = 10            # consecutive no-detection frames before triggering sweep
 
 COLOR_NAMES = {0: "red", 1: "green", 2: "blue"}
 HSV_BOUNDS  = {
@@ -107,16 +111,74 @@ def find_puck_cx(hsv_crop, color_name):
     return int(M["m10"] / M["m00"])
 
 
+def _rotate_until_puck(angular_z, duration_s, color_name):
+    """
+    Rotate at angular_z rad/s for up to duration_s seconds.
+    Stops early and returns True as soon as the puck is detected in a frame.
+    Returns False if the full duration elapses without detection.
+    """
+    t = Twist()
+    t.angular.z = angular_z
+    end = rospy.Time.now() + rospy.Duration(duration_s)
+
+    while rospy.Time.now() < end and not rospy.is_shutdown():
+        cmd_vel_pub.publish(t)
+        try:
+            msg = rospy.wait_for_message(
+                "/camera/color/image_2fps/compressed",
+                CompressedImage,
+                timeout=0.6,
+            )
+            img = bridge.compressed_imgmsg_to_cv2(msg, desired_encoding="bgr8")
+            h, _ = img.shape[:2]
+            crop_y = int(h * CROP_TOP_FRACTION)
+            hsv_crop = cv2.cvtColor(img[crop_y:, :], cv2.COLOR_BGR2HSV)
+            if find_puck_cx(hsv_crop, color_name) is not None:
+                cmd_vel_pub.publish(Twist())
+                return True
+        except rospy.ROSException:
+            pass  # timeout waiting for frame — keep rotating
+
+    cmd_vel_pub.publish(Twist())
+    return False
+
+
+def search_sweep(color_name):
+    """
+    Called when the puck is not in the robot's FOV.
+    Performs a 60° sweep to scan for the puck and stops the moment it is
+    detected, returning True so the caller can resume normal centering.
+
+    Sweep pattern (returns to original heading if puck not found):
+        0°  → –30° (30° CW)
+        –30° → +30° (60° CCW)
+        +30° → 0°  (30° CW, back to start)
+    """
+    step_s = SEARCH_ANGLE_RAD / SEARCH_ANGULAR_SPEED   # seconds per 30°
+
+    rospy.loginfo("center_puck: puck not in FOV — sweeping 30° CW")
+    if _rotate_until_puck(-SEARCH_ANGULAR_SPEED, step_s, color_name):
+        return True
+
+    rospy.loginfo("center_puck: sweeping 60° CCW")
+    if _rotate_until_puck(SEARCH_ANGULAR_SPEED, step_s * 2, color_name):
+        return True
+
+    rospy.loginfo("center_puck: puck not found — returning to original heading")
+    _rotate_until_puck(-SEARCH_ANGULAR_SPEED, step_s, color_name)
+    return False
+
+
 def handle_center_puck(req):
     color_id = req.puck_color
     if color_id not in COLOR_NAMES:
         rospy.logwarn("center_puck: unknown color id %d", color_id)
         return CenterPuckServerMessageResponse(success=False)
 
-    color_name   = COLOR_NAMES[color_id]
-    rate         = rospy.Rate(10)
-    deadline     = rospy.Time.now() + rospy.Duration(SERVICE_TIMEOUT_S)
-    stable_count = 0
+    color_name        = COLOR_NAMES[color_id]
+    rate              = rospy.Rate(10)
+    deadline          = rospy.Time.now() + rospy.Duration(SERVICE_TIMEOUT_S)
+    no_puck_count     = 0
     reset_pid()
 
     rospy.loginfo("center_puck: aligning to %s puck", color_name)
@@ -144,20 +206,24 @@ def handle_center_puck(req):
 
         twist = Twist()
         if cx is not None:
+            no_puck_count   = 0
             error           = desired_x - cx
             twist.angular.z = pid(error)
 
             if abs(error) < ALIGN_TOLERANCE_PX:
-                stable_count += 1
-            else:
-                stable_count = 0
-
-            if stable_count >= ALIGN_STABLE_FRAMES:
                 cmd_vel_pub.publish(Twist())
                 rospy.loginfo("center_puck: aligned (error=%.1fpx)", error)
                 return CenterPuckServerMessageResponse(success=True)
         else:
-            stable_count = 0
+            no_puck_count += 1
+            if no_puck_count >= NO_PUCK_FRAMES_BEFORE_SEARCH:
+                no_puck_count = 0
+                reset_pid()
+                if not search_sweep(color_name):
+                    rospy.logwarn("center_puck: puck not found after sweep")
+                    cmd_vel_pub.publish(Twist())
+                    return CenterPuckServerMessageResponse(success=False)
+                continue  # re-enter loop to grab a fresh frame after the sweep
 
         cmd_vel_pub.publish(twist)
 
