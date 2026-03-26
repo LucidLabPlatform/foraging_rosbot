@@ -1,5 +1,5 @@
 # Reff: http://wiki.ros.org/move_base
-recovery_behavior_enabled: true
+recovery_behavior_enabled: false
 
 controller_frequency: 10.0
 controller_patience: 10.0
