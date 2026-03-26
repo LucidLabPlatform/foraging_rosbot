@@ -22,9 +22,10 @@ CROP_TOP_FRACTION = 0.5     # Discard this fraction from the top of the image
 MIN_CONTOUR_AREA = 200      # Minimum area of contour to be considered a puck
 MAX_CONTOUR_AREA = 5000     # Maximum area of contour to be considered a puck
 HSV_BOUNDS = {
-    "red":   (np.array([165, 105,   0]), np.array([180, 255, 255])),
-    "green": (np.array([ 35, 20,   0]), np.array([ 80, 255, 255])),
-    "blue":  (np.array([ 90, 160,   0]), np.array([130, 255, 255])),
+    "red":   [(np.array([  0, 105,   0]), np.array([ 15, 255, 255])),
+              (np.array([165, 105,   0]), np.array([180, 255, 255]))],
+    "green": [(np.array([ 35,  20,   0]), np.array([ 80, 255, 255]))],
+    "blue":  [(np.array([ 90, 160,   0]), np.array([130, 255, 255]))],
 }
 KERNEL = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
 
@@ -56,9 +57,10 @@ def detect_color_pucks(hsv_img, color_name, max_pucks=3):
     Returns (detections, mask).
     detections is a list of (contour, cX, cY) — coordinates in the CROPPED image.
     """
-    low, high = HSV_BOUNDS[color_name]
-    mask = cv2.inRange(hsv_img, low, high)
-    mask = preprocess_mask(mask)
+    ranges = HSV_BOUNDS[color_name]
+    mask = preprocess_mask(
+        np.bitwise_or.reduce([cv2.inRange(hsv_img, lo, hi) for lo, hi in ranges])
+    )
 
     contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     if not contours:

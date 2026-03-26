@@ -38,7 +38,7 @@ MAX_ANGULAR_Z       = 0.8
 
 ALIGN_TOLERANCE_PX  = 20    # within this many px = aligned
 ALIGN_STABLE_FRAMES = 5     # consecutive aligned frames to declare success
-SERVICE_TIMEOUT_S   = 15.0
+SERVICE_TIMEOUT_S   = 25.0
 
 SEARCH_ANGULAR_SPEED         = 0.5           # rad/s for the search sweep
 SEARCH_ANGLE_RAD             = 0.5 # around 30 degrees
@@ -46,9 +46,10 @@ NO_PUCK_FRAMES_BEFORE_SEARCH = 10            # consecutive no-detection frames b
 
 COLOR_NAMES = {0: "red", 1: "green", 2: "blue"}
 HSV_BOUNDS = {
-    "red":   (np.array([165, 105,   0]), np.array([180, 255, 255])),
-    "green": (np.array([ 35, 20,   0]), np.array([ 80, 255, 255])),
-    "blue":  (np.array([ 90, 160,   0]), np.array([130, 255, 255])),
+    "red":   [(np.array([  0, 105,   0]), np.array([ 15, 255, 255])),
+              (np.array([165, 105,   0]), np.array([180, 255, 255]))],
+    "green": [(np.array([ 35,  20,   0]), np.array([ 80, 255, 255]))],
+    "blue":  [(np.array([ 90, 160,   0]), np.array([130, 255, 255]))],
 }
 KERNEL = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
 # ─────────────────────────────────────────────────────────────────────────────
@@ -86,8 +87,10 @@ def preprocess_mask(mask):
 
 def find_puck_cx(hsv_crop, color_name):
     """Return x-centre of the largest valid puck contour, or None."""
-    low, high = HSV_BOUNDS[color_name]
-    mask = preprocess_mask(cv2.inRange(hsv_crop, low, high))
+    ranges = HSV_BOUNDS[color_name]
+    mask = preprocess_mask(
+        np.bitwise_or.reduce([cv2.inRange(hsv_crop, lo, hi) for lo, hi in ranges])
+    )
     contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
     best = None
