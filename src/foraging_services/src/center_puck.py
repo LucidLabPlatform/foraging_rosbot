@@ -119,12 +119,13 @@ def _rotate_step(angular_z):
     end = rospy.Time.now() + rospy.Duration(duration)
     while rospy.Time.now() < end and not rospy.is_shutdown():
         cmd_vel_pub.publish(t)
-        rospy.sleep(0.05)
+        cv2.waitKey(50)  # 50 ms — keeps the OpenCV window responsive during rotation
     cmd_vel_pub.publish(Twist())
 
 
 def _puck_visible(color_name):
-    """Grab one camera frame and return True if the puck is detected."""
+    """Grab one camera frame, optionally show it in the debug window, and
+    return True if the puck is detected."""
     try:
         msg = rospy.wait_for_message(
             "/camera/color/image_2fps/compressed",
@@ -132,10 +133,22 @@ def _puck_visible(color_name):
             timeout=1.0,
         )
         img = bridge.compressed_imgmsg_to_cv2(msg, desired_encoding="bgr8")
-        h, _ = img.shape[:2]
+        h, w = img.shape[:2]
         crop_y = int(h * CROP_TOP_FRACTION)
-        hsv_crop = cv2.cvtColor(img[crop_y:, :], cv2.COLOR_BGR2HSV)
-        return find_puck_cx(hsv_crop, color_name) is not None
+        crop = img[crop_y:, :]
+        hsv_crop = cv2.cvtColor(crop, cv2.COLOR_BGR2HSV)
+        cx = find_puck_cx(hsv_crop, color_name)
+
+        if DEBUG:
+            dbg = crop.copy()
+            cv2.putText(dbg, "searching...", (10, 24),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
+            if cx is not None:
+                cv2.circle(dbg, (cx, dbg.shape[0] // 2), 6, (0, 255, 0), -1)
+            cv2.imshow("center_puck", dbg)
+            cv2.waitKey(1)
+
+        return cx is not None
     except rospy.ROSException:
         return False
 
