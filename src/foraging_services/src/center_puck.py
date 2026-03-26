@@ -37,6 +37,7 @@ Kd = 0.002
 MAX_ANGULAR_Z       = 0.8
 
 ALIGN_TOLERANCE_PX  = 20    # within this many px = aligned
+ALIGN_STABLE_FRAMES = 5     # consecutive aligned frames to declare success
 SERVICE_TIMEOUT_S   = 15.0
 
 SEARCH_ANGULAR_SPEED         = 0.5           # rad/s for the search sweep
@@ -133,7 +134,7 @@ def _puck_visible(color_name):
             timeout=1.0,
         )
         img = bridge.compressed_imgmsg_to_cv2(msg, desired_encoding="bgr8")
-        h, w = img.shape[:2]
+        h, _ = img.shape[:2]
         crop_y = int(h * CROP_TOP_FRACTION)
         crop = img[crop_y:, :]
         hsv_crop = cv2.cvtColor(crop, cv2.COLOR_BGR2HSV)
@@ -199,71 +200,81 @@ def handle_center_puck(req):
     color_name        = COLOR_NAMES[color_id]
     rate              = rospy.Rate(10)
     deadline          = rospy.Time.now() + rospy.Duration(SERVICE_TIMEOUT_S)
+    stable_count      = 0
     no_puck_count     = 0
     reset_pid()
 
     rospy.loginfo("center_puck: aligning to %s puck", color_name)
 
-    while not rospy.is_shutdown():
-        if rospy.Time.now() > deadline:
-            rospy.logwarn("center_puck: timed out")
-            cmd_vel_pub.publish(Twist())
-            return CenterPuckServerMessageResponse(success=False)
-
-        msg = rospy.wait_for_message(
-            "/camera/color/image_2fps/compressed",
-            CompressedImage,
-            timeout=2.0
-        )
-
-        img           = bridge.compressed_imgmsg_to_cv2(msg, desired_encoding="bgr8")
-        full_h, full_w = img.shape[:2]
-        crop_y        = int(full_h * CROP_TOP_FRACTION)
-        crop          = img[crop_y:, :]
-        hsv_crop      = cv2.cvtColor(crop, cv2.COLOR_BGR2HSV)
-        desired_x     = full_w // 2
-
-        cx = find_puck_cx(hsv_crop, color_name)
-
-        twist = Twist()
-        if cx is not None:
-            no_puck_count   = 0
-            error           = desired_x - cx
-            twist.angular.z = pid(error)
-
-            if abs(error) < ALIGN_TOLERANCE_PX:
+    try:
+        while not rospy.is_shutdown():
+            if rospy.Time.now() > deadline:
+                rospy.logwarn("center_puck: timed out")
                 cmd_vel_pub.publish(Twist())
-                rospy.loginfo("center_puck: aligned (error=%.1fpx)", error)
-                return CenterPuckServerMessageResponse(success=True)
-        else:
-            no_puck_count += 1
-            if no_puck_count >= NO_PUCK_FRAMES_BEFORE_SEARCH:
-                no_puck_count = 0
-                reset_pid()
-                if not search_sweep(color_name):
-                    rospy.logwarn("center_puck: puck not found after sweep")
-                    cmd_vel_pub.publish(Twist())
-                    return CenterPuckServerMessageResponse(success=False)
-                continue  # re-enter loop to grab a fresh frame after the sweep
+                return CenterPuckServerMessageResponse(success=False)
 
-        cmd_vel_pub.publish(twist)
+            msg = rospy.wait_for_message(
+                "/camera/color/image_2fps/compressed",
+                CompressedImage,
+                timeout=2.0
+            )
 
-        if DEBUG:
-            dbg = crop.copy()
-            cv2.line(dbg, (desired_x, 0), (desired_x, dbg.shape[0]), (0, 0, 255), 2)
+            img            = bridge.compressed_imgmsg_to_cv2(msg, desired_encoding="bgr8")
+            full_h, full_w = img.shape[:2]
+            crop_y         = int(full_h * CROP_TOP_FRACTION)
+            crop           = img[crop_y:, :]
+            hsv_crop       = cv2.cvtColor(crop, cv2.COLOR_BGR2HSV)
+            desired_x      = full_w // 2
+
+            cx = find_puck_cx(hsv_crop, color_name)
+
+            twist = Twist()
             if cx is not None:
-                cv2.circle(dbg, (cx, dbg.shape[0] // 2), 6, (0, 255, 0), -1)
-                cv2.putText(dbg, f"err:{desired_x - cx:+d}px", (10, 24),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+                no_puck_count   = 0
+                error           = desired_x - cx
+                twist.angular.z = pid(error)
+
+                if abs(error) < ALIGN_TOLERANCE_PX:
+                    stable_count += 1
+                else:
+                    stable_count = 0
+
+                if stable_count >= ALIGN_STABLE_FRAMES:
+                    cmd_vel_pub.publish(Twist())
+                    rospy.loginfo("center_puck: aligned (error=%.1fpx)", error)
+                    return CenterPuckServerMessageResponse(success=True)
             else:
-                cv2.putText(dbg, "no puck", (10, 24),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
-            cv2.imshow("center_puck", dbg)
-            cv2.waitKey(1)
+                stable_count  = 0
+                no_puck_count += 1
+                if no_puck_count >= NO_PUCK_FRAMES_BEFORE_SEARCH:
+                    no_puck_count = 0
+                    reset_pid()
+                    if not search_sweep(color_name):
+                        rospy.logwarn("center_puck: puck not found after sweep")
+                        cmd_vel_pub.publish(Twist())
+                        return CenterPuckServerMessageResponse(success=False)
+                    continue  # re-enter loop to grab a fresh frame after the sweep
 
-        rate.sleep()
+            cmd_vel_pub.publish(twist)
 
-    return CenterPuckServerMessageResponse(success=False)
+            if DEBUG:
+                dbg = crop.copy()
+                cv2.line(dbg, (desired_x, 0), (desired_x, dbg.shape[0]), (0, 0, 255), 2)
+                if cx is not None:
+                    cv2.circle(dbg, (cx, dbg.shape[0] // 2), 6, (0, 255, 0), -1)
+                    cv2.putText(dbg, f"err:{desired_x - cx:+d}px", (10, 24),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+                else:
+                    cv2.putText(dbg, "no puck", (10, 24),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
+                cv2.imshow("center_puck", dbg)
+                cv2.waitKey(1)
+
+            rate.sleep()
+
+        return CenterPuckServerMessageResponse(success=False)
+    finally:
+        cv2.destroyWindow("center_puck")
 
 
 def main():
