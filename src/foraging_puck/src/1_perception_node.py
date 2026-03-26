@@ -11,7 +11,7 @@ import rospy
 import numpy as np
 import cv2
 from cv_bridge import CvBridge
-from sensor_msgs.msg import CompressedImage, Image
+from sensor_msgs.msg import CompressedImage
 from foraging_msgs.msg import RawPuckDetected
 
 bridge = CvBridge()

@@ -64,6 +64,7 @@ add_service_files(
   FILES
   PickPuckServerMessage.srv
   DropPuckServerMessage.srv
+  CenterPuckServerMessage.srv
 )
 
 ## Generate actions in the 'action' folder

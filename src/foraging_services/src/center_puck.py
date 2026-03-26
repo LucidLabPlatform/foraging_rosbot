@@ -1,0 +1,193 @@
+#!/usr/bin/env python3
+'''
+CenterPuck service node.
+
+Service:    /center_puck  (CenterPuckServerMessage)
+  Request:  int32 puck_color   (0=red, 1=green, 2=blue)
+  Response: bool  success
+
+Subscribes: /camera/color/image_2fps/compressed
+Publishes:  /cmd_vel (Twist)
+
+On each camera frame: detects the requested puck, runs PID on angular.z
+to drive it to the image centre-line, and publishes cmd_vel.
+The service returns success once the puck stays aligned for
+ALIGN_STABLE_FRAMES consecutive frames, or False on timeout.
+'''
+
+import rospy
+import numpy as np
+import cv2
+from cv_bridge import CvBridge
+from sensor_msgs.msg import CompressedImage
+from geometry_msgs.msg import Twist
+from foraging_msgs.srv import CenterPuckServerMessage, CenterPuckServerMessageResponse
+
+# ── Tuning ───────────────────────────────────────────────────────────────────
+DEBUG               = True
+CROP_TOP_FRACTION   = 0.5
+
+MIN_CONTOUR_AREA    = 100
+MAX_CONTOUR_AREA    = 5000
+
+Kp = 0.004
+Ki = 0.00005
+Kd = 0.002
+MAX_ANGULAR_Z       = 0.8
+
+ALIGN_TOLERANCE_PX  = 20    # within this many px = aligned
+ALIGN_STABLE_FRAMES = 5     # consecutive aligned frames to declare success
+SERVICE_TIMEOUT_S   = 15.0
+
+COLOR_NAMES = {0: "red", 1: "green", 2: "blue"}
+HSV_BOUNDS  = {
+    "red":   (np.array([165, 105,   0]), np.array([180, 255, 255])),
+    "green": (np.array([ 35, 100,   0]), np.array([ 80, 255, 255])),
+    "blue":  (np.array([ 90, 160,   0]), np.array([130, 255, 255])),
+}
+KERNEL = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+# ─────────────────────────────────────────────────────────────────────────────
+
+bridge      = CvBridge()
+cmd_vel_pub = None
+
+# PID state
+error_sum  = 0.0
+last_error = 0.0
+
+
+def reset_pid():
+    global error_sum, last_error
+    error_sum  = 0.0
+    last_error = 0.0
+
+
+def pid(error):
+    global error_sum, last_error
+    error_sum += error
+    diff        = error - last_error
+    last_error  = error
+    raw = Kp * error + Ki * error_sum + Kd * diff
+    return max(-MAX_ANGULAR_Z, min(MAX_ANGULAR_Z, raw))
+
+
+def preprocess_mask(mask):
+    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN,  KERNEL, iterations=1)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, KERNEL, iterations=1)
+    mask = cv2.GaussianBlur(mask, (5, 5), 0)
+    _, mask = cv2.threshold(mask, 50, 255, cv2.THRESH_BINARY)
+    return mask
+
+
+def find_puck_cx(hsv_crop, color_name):
+    """Return x-centre of the largest valid puck contour, or None."""
+    low, high = HSV_BOUNDS[color_name]
+    mask = preprocess_mask(cv2.inRange(hsv_crop, low, high))
+    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+    best = None
+    for c in contours:
+        area = cv2.contourArea(c)
+        if not (MIN_CONTOUR_AREA <= area <= MAX_CONTOUR_AREA):
+            continue
+        perim = cv2.arcLength(c, True)
+        if perim <= 0:
+            continue
+        if 4.0 * np.pi * area / (perim * perim) < 0.4:
+            continue
+        if best is None or area > best[0]:
+            best = (area, c)
+
+    if best is None:
+        return None
+
+    M = cv2.moments(best[1])
+    if M["m00"] == 0:
+        return None
+    return int(M["m10"] / M["m00"])
+
+
+def handle_center_puck(req):
+    color_id = req.puck_color
+    if color_id not in COLOR_NAMES:
+        rospy.logwarn("center_puck: unknown color id %d", color_id)
+        return CenterPuckServerMessageResponse(success=False)
+
+    color_name   = COLOR_NAMES[color_id]
+    rate         = rospy.Rate(10)
+    deadline     = rospy.Time.now() + rospy.Duration(SERVICE_TIMEOUT_S)
+    stable_count = 0
+    reset_pid()
+
+    rospy.loginfo("center_puck: aligning to %s puck", color_name)
+
+    while not rospy.is_shutdown():
+        if rospy.Time.now() > deadline:
+            rospy.logwarn("center_puck: timed out")
+            cmd_vel_pub.publish(Twist())
+            return CenterPuckServerMessageResponse(success=False)
+
+        msg = rospy.wait_for_message(
+            "/camera/color/image_2fps/compressed",
+            CompressedImage,
+            timeout=2.0
+        )
+
+        img           = bridge.compressed_imgmsg_to_cv2(msg, desired_encoding="bgr8")
+        full_h, full_w = img.shape[:2]
+        crop_y        = int(full_h * CROP_TOP_FRACTION)
+        crop          = img[crop_y:, :]
+        hsv_crop      = cv2.cvtColor(crop, cv2.COLOR_BGR2HSV)
+        desired_x     = full_w // 2
+
+        cx = find_puck_cx(hsv_crop, color_name)
+
+        twist = Twist()
+        if cx is not None:
+            error           = desired_x - cx
+            twist.angular.z = pid(error)
+
+            if abs(error) < ALIGN_TOLERANCE_PX:
+                stable_count += 1
+            else:
+                stable_count = 0
+
+            if stable_count >= ALIGN_STABLE_FRAMES:
+                cmd_vel_pub.publish(Twist())
+                rospy.loginfo("center_puck: aligned (error=%.1fpx)", error)
+                return CenterPuckServerMessageResponse(success=True)
+        else:
+            stable_count = 0
+
+        cmd_vel_pub.publish(twist)
+
+        if DEBUG:
+            dbg = crop.copy()
+            cv2.line(dbg, (desired_x, 0), (desired_x, dbg.shape[0]), (0, 0, 255), 2)
+            if cx is not None:
+                cv2.circle(dbg, (cx, dbg.shape[0] // 2), 6, (0, 255, 0), -1)
+                cv2.putText(dbg, f"err:{desired_x - cx:+d}px", (10, 24),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+            else:
+                cv2.putText(dbg, "no puck", (10, 24),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
+            cv2.imshow("center_puck", dbg)
+            cv2.waitKey(1)
+
+        rate.sleep()
+
+    return CenterPuckServerMessageResponse(success=False)
+
+
+def main():
+    global cmd_vel_pub
+    rospy.init_node("center_puck_node")
+    cmd_vel_pub = rospy.Publisher("/cmd_vel", Twist, queue_size=1)
+    rospy.Service("/center_puck", CenterPuckServerMessage, handle_center_puck)
+    rospy.loginfo("center_puck_node ready — service at /center_puck")
+    rospy.spin()
+    cv2.destroyAllWindows()
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,3 @@
+int32 puck_color
+---
+bool success      # Did it achieve it?
