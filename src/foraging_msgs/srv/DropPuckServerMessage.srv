@@ -1,0 +1,4 @@
+float32 distance
+float32 speed
+---
+bool success      # Did it achieve it?
