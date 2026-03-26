@@ -29,7 +29,7 @@ DEBUG               = True
 CROP_TOP_FRACTION   = 0.5
 
 MIN_CONTOUR_AREA    = 100
-MAX_CONTOUR_AREA    = 5000
+MAX_CONTOUR_AREA    = 10000
 
 Kp = 0.004
 Ki = 0.00005
@@ -92,10 +92,6 @@ def find_puck_cx(hsv_crop, color_name):
         np.bitwise_or.reduce([cv2.inRange(hsv_crop, lo, hi) for lo, hi in ranges])
     )
     
-    if DEBUG:
-        cv2.imshow("center_puck_mask", mask)
-        cv2.waitKey(1)
-    
     contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
     best = None
@@ -103,8 +99,6 @@ def find_puck_cx(hsv_crop, color_name):
         area = cv2.contourArea(c)
         perim = cv2.arcLength(c, True)
         circ = (4.0 * np.pi * area / (perim * perim)) if perim > 0 else 0
-        rospy.loginfo("center_puck contour: area=%.1f circ=%.2f (need area %d-%d, circ>=0.4)",
-                      area, circ, MIN_CONTOUR_AREA, MAX_CONTOUR_AREA)
         if not (MIN_CONTOUR_AREA <= area <= MAX_CONTOUR_AREA):
             continue
         if perim <= 0:
