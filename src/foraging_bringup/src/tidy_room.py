@@ -20,7 +20,7 @@ from geometry_msgs.msg import Quaternion
 # Parameters
 # ---------------------------------------------------------------------------
 NUM_CORNERS_EXPECTED     = 3
-APPROACH_DIST            = 0.55   # meters offset from puck position for approach waypoint
+APPROACH_DIST            = 0.2   # meters offset from puck position for approach waypoint
 PUCK_SELECTION_STRATEGY  = "closest"   # "closest" | "color_order"
 PICK_DISTANCE            = 0.20
 PICK_SPEED               = 0.1
@@ -28,7 +28,7 @@ DROP_DISTANCE            = 0.20
 DROP_SPEED               = 0.1
 NAVIGATE_TO_PUCK_TIMEOUT = 30.0  # seconds
 NAVIGATE_TO_CORNER_TIMEOUT = 30.0
-CORNER_APPROACH_DIST = 0.40   # meters offset from corner position for approach waypoint
+CORNER_APPROACH_DIST = 0.20   # meters offset from corner position for approach waypoint
 
 
 # ---------------------------------------------------------------------------
