@@ -1,3 +1,4 @@
 int32 num_pucks_to_find
+int32 num_corners_to_find
 ---
-bool done      # find the pucks he need to find
+bool done  # true when both puck and corner count thresholds are met
