@@ -12,17 +12,22 @@ Puck localization node.
 Subscribes:
   /puck/detected             (foraging_msgs/PuckDetected)
   /camera/depth/camera_info  (sensor_msgs/CameraInfo)
+  /aruco/registry            (foraging_msgs/ArucoRegistry)  -- home filter
 
 Publishes:
   /puck/confirmed            (foraging_msgs/PuckConfirmed)   -- once per new unique puck
   /puck/registry             (foraging_msgs/PuckRegistry)    -- full confirmed list, latched
+
+Services:
+  /update_puck_status        (foraging_msgs/UpdatePuckStatusMessage)
 """
 
 import rospy
 import math
 
 from sensor_msgs.msg import CameraInfo
-from foraging_msgs.msg import PuckConfirmed, PuckDetected, PuckRegistry
+from foraging_msgs.msg import PuckConfirmed, PuckDetected, PuckRegistry, ArucoRegistry
+from foraging_msgs.srv import UpdatePuckStatusMessage, UpdatePuckStatusMessageRequest, UpdatePuckStatusMessageResponse
 
 import tf2_ros
 import tf2_geometry_msgs
@@ -43,6 +48,12 @@ CLUSTER_R      = 0.3   # metres — observations within this radius are the same
 CONFIRM_HITS   = 3     # number of observations before a puck is "confirmed"
 STALE_TIMEOUT  = rospy.Duration(5.0)  # drop tracks not updated within this time
 EWMA_ALPHA     = 0.5   # weight for exponential moving average (0.0 to 1.0)
+
+# ─── Home filter ─────────────────────────────────────────────────────────────
+HOME_FILTER_RADIUS = 0.35  # metres — ignore puck observations near any ArUco home corner
+
+# ─── ArUco registry (home corners) ──────────────────────────────────────────
+aruco_markers = []   # list of ArucoConfirmed — populated by /aruco/registry subscriber
 
 # ─── Puck registry ───────────────────────────────────────────────────────────
 # Each entry:
@@ -95,13 +106,18 @@ def _make_confirmed_msg(p) -> PuckConfirmed:
     out = PuckConfirmed()
     out.id     = p["id"]
     out.color  = p["color"]
-    out.status = 1
+    out.status = p.get("status", 0)
     out.x      = float(p["x"])
     out.y      = float(p["y"])
     out.z      = float(p["z"])
     return out
 
 
+
+
+def callback_aruco_registry(msg: ArucoRegistry):
+    global aruco_markers
+    aruco_markers = list(msg.markers)
 
 
 def callback_info(msg: CameraInfo):
@@ -180,6 +196,15 @@ def callback_detected(msg: PuckDetected):
         return
 
     color = int(msg.color)
+    obs_x, obs_y = map_pt[0], map_pt[1]
+
+    # 2b. Home filter — skip observation if it's near any confirmed ArUco home corner
+    for marker in aruco_markers:
+        dist = math.sqrt((obs_x - marker.x)**2 + (obs_y - marker.y)**2)
+        if dist < HOME_FILTER_RADIUS:
+            rospy.logdebug("Home filter: suppressing puck (color=%d) at (%.2f, %.2f) — near ArUco corner %d",
+                           color, obs_x, obs_y, marker.marker_id)
+            return
 
     # 3. Find nearest existing cluster of the same color
     best_i = None
@@ -198,6 +223,7 @@ def callback_detected(msg: PuckDetected):
             "color":     color,
             "hits":      1,
             "confirmed": False,
+            "status":    0,
             "x":         map_pt[0],
             "y":         map_pt[1],
             "z":         map_pt[2],
@@ -232,6 +258,25 @@ def callback_detected(msg: PuckDetected):
     # 6. Already confirmed — no further action needed (pucks are stationary)
 
 
+# ─── /update_puck_status service ─────────────────────────────────────────────
+
+def handle_update_puck_status(req):
+    if req.new_status not in (0, 1):
+        return UpdatePuckStatusMessageResponse(success=False, error_message=f"invalid new_status {req.new_status}")
+    for p in (p for p in pucks if p["confirmed"]):
+        if p["id"] == req.puck_id:
+            p["status"] = req.new_status
+            p["x"] = req.home_x
+            p["y"] = req.home_y
+            # z is not updated — TF and navigation only use x/y for placed pucks
+            publish_registry()  # re-publish latched /puck/registry
+            return UpdatePuckStatusMessageResponse(success=True, error_message="")
+    return UpdatePuckStatusMessageResponse(
+        success=False,
+        error_message=f"puck id {req.puck_id} not found"
+    )
+
+
 # ─── Entry point ─────────────────────────────────────────────────────────────
 
 def main():
@@ -250,6 +295,11 @@ def main():
                      callback_info, queue_size=1)
     rospy.Subscriber("/puck/detected", PuckDetected,
                      callback_detected, queue_size=50)
+    rospy.Subscriber("/aruco/registry", ArucoRegistry,
+                     callback_aruco_registry, queue_size=1)
+
+    rospy.Service("/update_puck_status", UpdatePuckStatusMessage, handle_update_puck_status)
+    rospy.loginfo("update_puck_status service ready")
 
     rospy.loginfo("puck_localization_node started — CONFIRM_HITS=%d CLUSTER_R=%.2fm",
                   CONFIRM_HITS, CLUSTER_R)

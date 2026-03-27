@@ -1,0 +1,9 @@
+int32 puck_id
+int32 FLOOR = 0
+int32 PLACED_HOME = 1
+int32 new_status    # 1 = placed_home
+float32 home_x      # corner map position
+float32 home_y
+---
+bool success
+string error_message

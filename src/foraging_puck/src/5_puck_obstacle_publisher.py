@@ -86,7 +86,7 @@ class PuckObstaclePublisher:
 
             if self.latest_registry is not None:
                 for puck in self.latest_registry.pucks:
-                    if puck.status == 1:
+                    if puck.status == 0:  # only floor pucks are obstacles; placed pucks at home are not
                         points.extend(make_disc(puck.x, puck.y))
 
             self.pub.publish(build_cloud(self.frame_id, points))
