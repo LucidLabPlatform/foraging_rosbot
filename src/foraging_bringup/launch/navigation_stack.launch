@@ -46,7 +46,22 @@
     </node>
     <node pkg="foraging_aruco" type="4_pub_aruco_tf.py" name="aruco_tf_broadcaster_node"  output="screen">
     </node>
-    
+
+  <!-- Foraging action servers -->
+  <node name="pick_puck_server"   pkg="foraging_services" type="pick_puck_server.py"   output="screen"/>
+  <node name="drop_puck_server"   pkg="foraging_services" type="drop_puck_server.py"   output="screen"/>
+  <node name="center_puck_server" pkg="foraging_services" type="center_puck.py"        output="screen"/>
+  <node name="random_walk_server" pkg="foraging_services" type="random_walk.py"        output="screen"/>
+
+  <!-- Autonomous foraging orchestrator (disabled by default — launch separately with params) -->
+  <!--
+  <node name="tidy_room" pkg="foraging_bringup" type="tidy_room.py" output="screen">
+    <param name="num_pucks_expected" value="6"/>
+    <param name="explore_puck_pct"   value="0.5"/>
+    <param name="explore_corner_pct" value="0.67"/>
+  </node>
+  -->
+
     <!-- ===== while conditions not satisfied -> move around random, explore, find pucks, and corners ===== -->
     <!-- ===== when conditions satisfied -> go grab pucks one by one and bring them to their respective homes ===== -->
 
