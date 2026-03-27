@@ -30,6 +30,7 @@ MAX_ORIENTATION_TRIES = 12    # max attempts to find a free direction per step
 ANGULAR_SPEED         = 0.6   # rad/s for in-place rotation
 YAW_TOLERANCE         = 0.1   # rad — acceptable error when rotating to target yaw
 ROTATE_TIMEOUT        = 8.0   # seconds — max time to complete an in-place rotation
+PAUSE_AFTER_STEP      = 2.0   # seconds to pause after each step to allow puck detection
 
 
 class RandomWalkServer:
@@ -214,6 +215,7 @@ class RandomWalkServer:
                 success = self._send_goal(goal_x, goal_y, world_angle)
                 if success:
                     direction_found = True
+                    rospy.sleep(PAUSE_AFTER_STEP)
                     break
                 else:
                     state = self._move_base.get_state()
