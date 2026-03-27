@@ -3,7 +3,7 @@
 CenterPuck service node.
 
 Service:    /center_puck  (CenterPuckServerMessage)
-  Request:  int32 puck_color   (0=red, 1=green, 2=blue)
+  Request:  int32 puck_color   (0=unknown, 1=red, 2=green, 3=blue)
   Response: bool  success
 
 Subscribes: /camera/color/image_2fps/compressed
@@ -44,7 +44,7 @@ SEARCH_ANGULAR_SPEED         = 0.5           # rad/s for the search sweep
 SEARCH_ANGLE_RAD             = 0.5 # around 30 degrees
 NO_PUCK_FRAMES_BEFORE_SEARCH = 10            # consecutive no-detection frames before triggering sweep
 
-COLOR_NAMES = {0: "red", 1: "green", 2: "blue"}
+COLOR_NAMES = {0: "unknown", 1: "red", 2: "green", 3: "blue"}
 HSV_BOUNDS = {
     "red":   [(np.array([  0, 105,   0]), np.array([ 15, 255, 255])),
               (np.array([165, 105,   0]), np.array([180, 255, 255]))],
@@ -198,7 +198,7 @@ def search_sweep(color_name):
 
 def handle_center_puck(req):
     color_id = req.puck_color
-    if color_id not in COLOR_NAMES:
+    if color_id not in (1, 2, 3):
         rospy.logwarn("center_puck: unknown color id %d", color_id)
         return CenterPuckServerMessageResponse(success=False)
 

@@ -4,13 +4,13 @@ Get /puck/detected/raw:
  - header (copied from color image msg)
  - center_x (image pixel coordinates, full image space)
  - center_y (image pixel coordinates, full image space)
- - color (0=red,1=green,2=blue)
+ - color (0=unknown,1=red,2=green,3=blue)
 Publish /puck/detected with:
  - std_msgs/Header header
  - float32 center_x
  - float32 center_y
  - float32 distance   # estimated distance from depth image
- - int32 color        # 0=red  1=green  2=blue
+ - int32 color        # 0=unknown  1=red  2=green  3=blue
 """
 
 import rospy
@@ -27,7 +27,7 @@ MIN_CLUSTER_SAMPLES   = 5    # Minimum readings in dominant cluster to trust the
 
 pending_pucks = []
 publisher_puck = None
-COLOR_BGR = {0: (0, 0, 255), 1: (0, 255, 0), 2: (255, 255, 255)}
+COLOR_BGR = {1: (0, 0, 255), 2: (0, 255, 0), 3: (255, 0, 0)}
 
 
 def callback_raw_puck(msg: RawPuckDetected):

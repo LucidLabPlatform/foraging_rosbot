@@ -4,7 +4,7 @@ Publishes foraging_msgs/RawPuckDetected with:
  - header (copied from color image msg)
  - center_x (image pixel coordinates, in FULL image space)
  - center_y (image pixel coordinates, in FULL image space)
- - color (0=red,1=green,2=blue)
+ - color (0=unknown,1=red,2=green,3=blue)
 """
 
 import rospy
@@ -106,7 +106,7 @@ def callback_color(msg: CompressedImage):
 
     hsv_img = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
 
-    for color_name, color_id in [("red", 0), ("green", 1), ("blue", 2)]:
+    for color_name, color_id in [("red", 1), ("green", 2), ("blue", 3)]:
         detections, mask = detect_color_pucks(hsv_img, color_name, max_pucks=3)
 
         for contour, cx, cy in detections:
