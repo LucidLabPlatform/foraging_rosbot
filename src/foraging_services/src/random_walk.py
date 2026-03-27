@@ -236,8 +236,7 @@ def main():
     rospy.init_node("random_walk_server")
     rospy.loginfo("Random walk server node started.")
     RandomWalkServer()
-    spinner = rospy.MultiThreadedSpinner(4)
-    spinner.spin()
+    rospy.spin()
 
 
 if __name__ == "__main__":
