@@ -24,22 +24,10 @@ CROP_TOP_FRACTION    = 0.5   # Must match perception_node.py
 BOTTOM_STRIP_FRACTION = 0.3  # Sample bottom 30% of bbox height
 DEPTH_CLUSTER_TOL_MM  = 150  # Readings within 150mm are considered the same surface
 MIN_CLUSTER_SAMPLES   = 5    # Minimum readings in dominant cluster to trust the depth
-BLACK_THRESHOLD       = 30   # Pixels with all channels below this are treated as background
 
 pending_pucks = []
 publisher_puck = None
-latest_color = None   # latest cropped color image (BGR, uint8)
 COLOR_BGR = {1: (0, 0, 255), 2: (0, 255, 0), 3: (255, 0, 0)}
-
-
-def callback_color(msg: CompressedImage):
-    global latest_color
-    buf = np.frombuffer(msg.data, dtype=np.uint8)
-    img = cv2.imdecode(buf, cv2.IMREAD_COLOR)
-    if img is None:
-        return
-    crop_y = int(img.shape[0] * CROP_TOP_FRACTION)
-    latest_color = img[crop_y:, :]
 
 
 def callback_raw_puck(msg: RawPuckDetected):
@@ -89,15 +77,7 @@ def callback_depth(msg: CompressedImage):
 
         # Sample bottom strip of the bounding box
         strip = depth_cropped[strip_top:bbox_bottom, bbox_x:bbox_x + bbox_w]
-
-        # Exclude pixels whose color is black — they are background leaking into the bbox,
-        # and their depth would be from the wall behind the puck rather than the puck itself
-        if latest_color is not None:
-            color_strip = latest_color[strip_top:bbox_bottom, bbox_x:bbox_x + bbox_w]
-            not_black = np.any(color_strip > BLACK_THRESHOLD, axis=2)
-            valid = strip[not_black & (strip > 0)].flatten()
-        else:
-            valid = strip[strip > 0].flatten()
+        valid = strip[strip > 0].flatten()
 
         # Find the largest cluster of similar depths
         valid_sorted = np.sort(valid)
@@ -151,7 +131,6 @@ def main():
     rospy.init_node("puck_depth_node")
     publisher_puck = rospy.Publisher('/puck/detected', PuckDetected, queue_size=10)
     rospy.Subscriber("/camera/depth/image_2fps/compressedDepth", CompressedImage, callback_depth, queue_size=1)
-    rospy.Subscriber("/camera/color/image_2fps/compressed", CompressedImage, callback_color, queue_size=1)
     rospy.Subscriber("/puck/detected/raw", RawPuckDetected, callback_raw_puck, queue_size=10)
     rospy.spin()
     cv2.destroyAllWindows()
