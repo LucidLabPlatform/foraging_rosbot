@@ -19,7 +19,7 @@ import cv2
 from sensor_msgs.msg import CompressedImage
 from foraging_msgs.msg import RawPuckDetected, PuckDetected
 
-DEBUG = True
+DEBUG = False
 CROP_TOP_FRACTION    = 0.5   # Must match perception_node.py
 CIRCLE_MASK_SCALE    = 0.8   # Sample inner 80% of detected circle to avoid edge pixels
 DEPTH_CLUSTER_TOL_MM  = 150  # Readings within 150mm are considered the same surface
@@ -88,7 +88,7 @@ def callback_depth(msg: CompressedImage):
 
         total_mask_pixels = np.count_nonzero(mask)
         if len(valid) < total_mask_pixels * MIN_VALID_DEPTH_RATIO:
-            rospy.logwarn_throttle(2, f"Too many invalid depth pixels ({len(valid)}/{total_mask_pixels}) — skipping")
+            rospy.logdebug(f"Too many invalid depth pixels ({len(valid)}/{total_mask_pixels}) — skipping")
             continue
 
         # Find the largest cluster of similar depths
@@ -109,7 +109,7 @@ def callback_depth(msg: CompressedImage):
         distance_mm = float(np.mean(best_cluster))
 
         if not (100 < distance_mm < 2000):
-            rospy.logwarn_throttle(2, f"Depth out of range {distance_mm:.0f}mm — skipping")
+            rospy.logdebug(f"Depth out of range {distance_mm:.0f}mm — skipping")
             continue
 
         distance_m = distance_mm / 1000.0

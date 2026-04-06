@@ -72,7 +72,6 @@
     <!-- ===== when conditions satisfied -> go grab pucks one by one and bring them to their respective homes ===== -->
 
 
-    <!-- ===== VISUALIZATION ===== -->
     <!-- robot_state_publisher and joint_state_publisher are NOT launched here
          because the ROSbot Docker containers already publish the full TF tree
          (odom → base_link → all sensors). Running a second instance corrupts TF. -->

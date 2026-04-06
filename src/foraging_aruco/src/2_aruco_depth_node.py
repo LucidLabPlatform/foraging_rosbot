@@ -63,11 +63,11 @@ def callback_depth(msg: CompressedImage):
 
         distance_mm = float(np.median(valid))
         if not (100 < distance_mm < 5000):
-            rospy.logwarn_throttle(2, f"Depth out of range {distance_mm:.0f}mm for marker {marker.marker_id} — skipping")
+            rospy.logdebug(f"Depth out of range {distance_mm:.0f}mm for marker {marker.marker_id} — skipping")
             continue
 
         distance_m = distance_mm / 1000.0
-        rospy.loginfo(f"ArUco id={marker.marker_id} at ({cx},{cy}) → {distance_m:.3f}m")
+        rospy.logdebug(f"ArUco id={marker.marker_id} at ({cx},{cy}) → {distance_m:.3f}m")
 
         out = ArucoDetected()
         out.header    = marker.header
