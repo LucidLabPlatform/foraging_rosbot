@@ -505,10 +505,17 @@ def main():
             rospy.logwarn("map→base_link not available yet, retrying...")
     rospy.loginfo("TF map→base_link ready.")
 
-    # Recreate the action client now that move_base has had time to start
+    # Wait for move_base to fully initialize (costmap + planner take ~10s after map frame)
+    rospy.loginfo("Waiting 10s for move_base to initialize costmaps...")
+    rospy.sleep(10.0)
+
+    # Recreate the action client now that move_base should be ready
     node._move_base = actionlib.SimpleActionClient('move_base', MoveBaseAction)
-    rospy.loginfo("Waiting for move_base...")
-    node._move_base.wait_for_server()
+    rospy.loginfo("Waiting for move_base action server...")
+    if not node._move_base.wait_for_server(rospy.Duration(30.0)):
+        rospy.logfatal("move_base action server not available after 30s — aborting")
+        return
+    rospy.loginfo("move_base connected.")
     rospy.loginfo("Waiting for services...")
     for svc_name in ['/random_walk', '/center_puck', '/pick_puck',
                      '/drop_puck', '/update_puck_status']:
