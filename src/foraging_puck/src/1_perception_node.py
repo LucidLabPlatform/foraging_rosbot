@@ -30,17 +30,14 @@ HSV_BOUNDS = {
 KERNEL = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
 
 
-def publish_detection(header, cx, cy, bx, by, bw, bh, color_id):
+def publish_detection(header, cx, cy, color_id, radius):
     global publisher_puck_center
     msg_puck_center = RawPuckDetected()
     msg_puck_center.header   = header
     msg_puck_center.center_x = float(cx)
     msg_puck_center.center_y = float(cy)
-    msg_puck_center.bbox_x   = int(bx)
-    msg_puck_center.bbox_y   = int(by)
-    msg_puck_center.bbox_w   = int(bw)
-    msg_puck_center.bbox_h   = int(bh)
     msg_puck_center.color    = int(color_id)
+    msg_puck_center.radius   = float(radius)
     publisher_puck_center.publish(msg_puck_center)
 
 
@@ -110,15 +107,13 @@ def callback_color(msg: CompressedImage):
         detections, mask = detect_color_pucks(hsv_img, color_name, max_pucks=3)
 
         for contour, cx, cy in detections:
-            # Bounding box in cropped-image space; offset y to full-image space
-            bx, by_crop, bw, bh = cv2.boundingRect(contour)
-            by = by_crop + crop_y
-            publish_detection(header, cx, cy + crop_y, bx, by, bw, bh, color_id)
+            (_, _), radius = cv2.minEnclosingCircle(contour)
+            publish_detection(header, cx, cy + crop_y, color_id, radius)
 
             if DEBUG_VISUALS:
+                cv2.circle(img, (cx, cy), int(radius), (255, 0, 0), 2)
                 cv2.circle(img, (cx, cy), 2, (0, 255, 0), -1)
-                cv2.rectangle(img, (bx, by_crop), (bx + bw, by_crop + bh), (255, 0, 0), 2)
-                cv2.putText(img, color_name, (bx, max(0, by_crop - 6)),
+                cv2.putText(img, color_name, (cx, max(0, cy - int(radius) - 6)),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 255), 1)
 
     if DEBUG_VISUALS:

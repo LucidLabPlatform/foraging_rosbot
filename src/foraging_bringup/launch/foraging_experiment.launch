@@ -1,0 +1,28 @@
+<launch>
+  <!-- ===== Sweepable experiment parameters ===== -->
+  <arg name="trial_duration"     default="1200"/>
+  <arg name="site_fidelity_rate" default="0.5"/>
+  <arg name="walk_sigma"         default="0.5"/>
+  <arg name="explore_puck_pct"   default="0.5"/>
+  <arg name="explore_corner_pct" default="0.67"/>
+  <arg name="num_pucks"          default="6"/>
+  <arg name="num_corners"        default="3"/>
+  <arg name="puck_selection"     default="closest"/>
+
+  <!-- ===== Navigation stack + perception + services ===== -->
+  <include file="$(find foraging_bringup)/launch/navigation_stack.launch"/>
+
+  <!-- Override random_walk_server CRW param -->
+  <param name="/random_walk_server/walk_sigma" value="$(arg walk_sigma)"/>
+
+  <!-- ===== Foraging orchestrator ===== -->
+  <node name="tidy_room" pkg="foraging_bringup" type="tidy_room.py" output="screen">
+    <param name="trial_duration"      value="$(arg trial_duration)"/>
+    <param name="site_fidelity_rate"  value="$(arg site_fidelity_rate)"/>
+    <param name="explore_puck_pct"    value="$(arg explore_puck_pct)"/>
+    <param name="explore_corner_pct"  value="$(arg explore_corner_pct)"/>
+    <param name="num_pucks_expected"  value="$(arg num_pucks)"/>
+    <param name="num_corners_expected" value="$(arg num_corners)"/>
+    <param name="puck_selection"      value="$(arg puck_selection)"/>
+  </node>
+</launch>

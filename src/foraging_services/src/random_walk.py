@@ -39,6 +39,12 @@ class RandomWalkServer:
         self._corner_count: int = 0
         self._count_lock = threading.Lock()
 
+        # Correlated random walk: when walk_sigma > 0, successive turn angles
+        # are drawn from N(previous_heading, sigma) instead of uniform.
+        # This produces a CPFA-style correlated random walk (CRW).
+        self._walk_sigma = rospy.get_param('~walk_sigma', 0.0)
+        self._last_heading = None
+
         # Subscribers
         rospy.Subscriber("/puck/registry", PuckRegistry, self._puck_registry_cb, queue_size=1)
         rospy.Subscriber("/aruco/registry", ArucoRegistry, self._aruco_registry_cb, queue_size=1)
@@ -189,7 +195,11 @@ class RandomWalkServer:
             # Try to find a free direction: random angle → rotate → let move_base check path
             direction_found = False
             for attempt in range(MAX_ORIENTATION_TRIES):
-                world_angle = random.uniform(-math.pi, math.pi) + robot_yaw
+                if self._walk_sigma > 0 and self._last_heading is not None:
+                    delta = random.gauss(0, self._walk_sigma)
+                    world_angle = self._last_heading + delta
+                else:
+                    world_angle = random.uniform(-math.pi, math.pi) + robot_yaw
                 goal_x = robot_x + STEP_SIZE * math.cos(world_angle)
                 goal_y = robot_y + STEP_SIZE * math.sin(world_angle)
 
@@ -215,6 +225,7 @@ class RandomWalkServer:
                 success = self._send_goal(goal_x, goal_y, world_angle)
                 if success:
                     direction_found = True
+                    self._last_heading = world_angle
                     rospy.sleep(PAUSE_AFTER_STEP)
                     break
                 else:
