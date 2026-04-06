@@ -505,6 +505,8 @@ def main():
             rospy.logwarn("map→base_link not available yet, retrying...")
     rospy.loginfo("TF map→base_link ready.")
 
+    # Recreate the action client now that move_base has had time to start
+    node._move_base = actionlib.SimpleActionClient('move_base', MoveBaseAction)
     rospy.loginfo("Waiting for move_base...")
     node._move_base.wait_for_server()
     rospy.loginfo("Waiting for services...")
