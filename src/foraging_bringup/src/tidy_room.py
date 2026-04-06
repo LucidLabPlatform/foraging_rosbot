@@ -491,6 +491,20 @@ class TidyRoom:
 def main():
     rospy.init_node('tidy_room')
     node = TidyRoom()
+
+    # Wait for the map frame first — gmapping needs a few seconds to publish
+    # map→odom. Without this, move_base can't initialize its costmap and
+    # its action server never starts.
+    rospy.loginfo("Waiting for TF map→base_link (gmapping to initialize)...")
+    while not rospy.is_shutdown():
+        try:
+            node._tf_listener.waitForTransform(
+                "map", "base_link", rospy.Time(0), rospy.Duration(5.0))
+            break
+        except (tf.Exception, tf.LookupException, tf.ConnectivityException):
+            rospy.logwarn("map→base_link not available yet, retrying...")
+    rospy.loginfo("TF map→base_link ready.")
+
     rospy.loginfo("Waiting for move_base...")
     node._move_base.wait_for_server()
     rospy.loginfo("Waiting for services...")
@@ -498,9 +512,6 @@ def main():
                      '/drop_puck', '/update_puck_status']:
         rospy.wait_for_service(svc_name)
     rospy.loginfo("All services ready. Starting.")
-    rospy.loginfo("Waiting for TF map→base_link...")
-    node._tf_listener.waitForTransform("map", "base_link", rospy.Time(0), rospy.Duration(10.0))
-    rospy.loginfo("TF ready.")
     node.run()
 
 
