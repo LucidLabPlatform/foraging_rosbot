@@ -15,13 +15,10 @@ import rospy
 import math
 import random
 import threading
-import tf
 from foraging_msgs.msg import PuckRegistry, ArucoRegistry
 from foraging_msgs.srv import RandomWalkServerMessage, RandomWalkServerMessageResponse
-import actionlib
-from actionlib_msgs.msg import GoalStatus
-from move_base_msgs.msg import MoveBaseAction, MoveBaseGoal
-from geometry_msgs.msg import Quaternion, Twist
+from geometry_msgs.msg import Twist
+from move_base_client import MoveBaseClient
 
 # ── Parameters ────────────────────────────────────────────────────────────────
 STEP_SIZE             = 0.7   # meters per step
@@ -49,20 +46,15 @@ class RandomWalkServer:
         rospy.Subscriber("/puck/registry", PuckRegistry, self._puck_registry_cb, queue_size=1)
         rospy.Subscriber("/aruco/registry", ArucoRegistry, self._aruco_registry_cb, queue_size=1)
 
-        # TF listener
-        self._tf_listener = tf.TransformListener()
-
         # cmd_vel publisher (for in-place rotation)
         self._cmd_vel = rospy.Publisher("/cmd_vel", Twist, queue_size=1)
 
-        # move_base action client
-        self._move_base = actionlib.SimpleActionClient("move_base", MoveBaseAction)
-        rospy.loginfo("Waiting for move_base action server…")
-        connected = self._move_base.wait_for_server(rospy.Duration(5))
-        if connected:
-            rospy.loginfo("move_base action server connected.")
-        else:
-            rospy.logwarn("move_base action server not available within timeout — continuing anyway.")
+        # Navigation client (handles TF + move_base connection)
+        self._nav = MoveBaseClient()
+        if not self._nav.wait_until_ready(timeout=60.0):
+            rospy.logfatal("move_base not available — random walk cannot start")
+            rospy.signal_shutdown("move_base not available")
+            return
 
         # Service server
         self._service = rospy.Service("random_walk", RandomWalkServerMessage, self.handle_random_walk)
@@ -80,18 +72,6 @@ class RandomWalkServer:
 
     # ── Helpers ───────────────────────────────────────────────────────────────
 
-    def _get_robot_pose(self):
-        """Return (x, y, yaw) of base_link in map frame, or None on failure."""
-        try:
-            self._tf_listener.waitForTransform("map", "base_link", rospy.Time(0), rospy.Duration(1.0))
-            (trans, rot) = self._tf_listener.lookupTransform("map", "base_link", rospy.Time(0))
-            x, y = trans[0], trans[1]
-            _, _, yaw = tf.transformations.euler_from_quaternion(rot)
-            return x, y, yaw
-        except (tf.LookupException, tf.ConnectivityException, tf.ExtrapolationException) as e:
-            rospy.logwarn(f"TF lookup failed: {e}")
-            return None
-
     def _rotate_to_yaw(self, target_yaw: float) -> bool:
         """Rotate in place to face target_yaw (world frame) using cmd_vel. Returns True on success."""
         rate = rospy.Rate(20)
@@ -105,7 +85,7 @@ class RandomWalkServer:
                 rospy.logwarn("rotate_to_yaw timed out")
                 return False
 
-            pose = self._get_robot_pose()
+            pose = self._nav.get_robot_pose()
             if pose is None:
                 rate.sleep()
                 continue
@@ -126,26 +106,6 @@ class RandomWalkServer:
         twist.angular.z = 0.0
         self._cmd_vel.publish(twist)
         return False
-
-    def _send_goal(self, goal_x: float, goal_y: float, world_angle: float) -> bool:
-        """Send a move_base goal and wait up to STEP_TIMEOUT seconds. Return True on success."""
-        goal = MoveBaseGoal()
-        goal.target_pose.header.frame_id = "map"
-        goal.target_pose.header.stamp = rospy.Time.now()
-        goal.target_pose.pose.position.x = goal_x
-        goal.target_pose.pose.position.y = goal_y
-        q = tf.transformations.quaternion_from_euler(0, 0, world_angle)
-        goal.target_pose.pose.orientation = Quaternion(*q)
-
-        self._move_base.send_goal(goal)
-        finished = self._move_base.wait_for_result(rospy.Duration(STEP_TIMEOUT))
-        if not finished:
-            rospy.logwarn("move_base goal timed out — cancelling.")
-            self._move_base.cancel_goal()
-            return False
-
-        state = self._move_base.get_state()
-        return state == GoalStatus.SUCCEEDED
 
     # ── Service handler ───────────────────────────────────────────────────────
 
@@ -186,7 +146,7 @@ class RandomWalkServer:
                     f"corners={corner_count}/{num_corners}"
                 )
 
-            pose = self._get_robot_pose()
+            pose = self._nav.get_robot_pose()
             if pose is None:
                 rospy.sleep(0.5)
                 continue
@@ -210,7 +170,7 @@ class RandomWalkServer:
                     continue
 
                 # Refresh pose after rotation
-                pose = self._get_robot_pose()
+                pose = self._nav.get_robot_pose()
                 if pose is not None:
                     robot_x, robot_y, _ = pose
                     goal_x = robot_x + STEP_SIZE * math.cos(world_angle)
@@ -222,17 +182,16 @@ class RandomWalkServer:
                     f"angle={math.degrees(world_angle - robot_yaw):.1f}°, "
                     f"goal=({goal_x:.2f}, {goal_y:.2f})"
                 )
-                success = self._send_goal(goal_x, goal_y, world_angle)
+                success = self._nav.go_to(goal_x, goal_y, yaw=world_angle, timeout=STEP_TIMEOUT)
                 if success:
                     direction_found = True
                     self._last_heading = world_angle
                     rospy.sleep(PAUSE_AFTER_STEP)
                     break
                 else:
-                    state = self._move_base.get_state()
                     rospy.logdebug(
-                        "Step %d attempt %d: move_base state=%d, trying new angle",
-                        step, attempt + 1, state
+                        "Step %d attempt %d: move_base failed, trying new angle",
+                        step, attempt + 1
                     )
 
             if not direction_found:

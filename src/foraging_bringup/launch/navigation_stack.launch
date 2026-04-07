@@ -15,9 +15,7 @@
         <param name="angularUpdate"         value="0.1"/>
         <param name="temporalUpdate"        value="2.0"/>
     </node>
-    <!-- Delay move_base by 5s so gmapping can publish the map frame first -->
-    <node pkg="move_base" type="move_base" respawn="false" name="move_base" output="screen"
-          launch-prefix="bash -c 'sleep 5; exec $0 $@' --">
+    <node pkg="move_base" type="move_base" respawn="false" name="move_base" output="screen">
         <rosparam file="$(find foraging_bringup)/config/move_base.yaml"       command="load"/>
         <rosparam file="$(find foraging_bringup)/config/costmap_common.yaml"  command="load" ns="global_costmap"/>
         <rosparam file="$(find foraging_bringup)/config/costmap_common.yaml"  command="load" ns="local_costmap"/>

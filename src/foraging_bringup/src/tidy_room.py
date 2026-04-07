@@ -4,12 +4,12 @@ import json
 import random
 import time
 
+import os
+import sys
 import rospy
 import math
 import threading
-import tf
-import actionlib
-from actionlib_msgs.msg import GoalStatus
+import rospkg
 from std_msgs.msg import String
 from foraging_msgs.msg import PuckRegistry, ArucoRegistry
 from foraging_msgs.srv import (RandomWalkServerMessage, RandomWalkServerMessageRequest,
@@ -17,8 +17,9 @@ from foraging_msgs.srv import (RandomWalkServerMessage, RandomWalkServerMessageR
                                 PickPuckServerMessage, PickPuckServerMessageRequest,
                                 DropPuckServerMessage, DropPuckServerMessageRequest,
                                 UpdatePuckStatusMessage, UpdatePuckStatusMessageRequest)
-from move_base_msgs.msg import MoveBaseAction, MoveBaseGoal
-from geometry_msgs.msg import Quaternion
+
+sys.path.insert(0, os.path.join(rospkg.RosPack().get_path('foraging_services'), 'src'))
+from move_base_client import MoveBaseClient
 
 
 # ---------------------------------------------------------------------------
@@ -74,11 +75,8 @@ class TidyRoom:
         self._drop_puck          = rospy.ServiceProxy('/drop_puck',          DropPuckServerMessage)
         self._update_puck_status = rospy.ServiceProxy('/update_puck_status', UpdatePuckStatusMessage)
 
-        # move_base action client
-        self._move_base = actionlib.SimpleActionClient('move_base', MoveBaseAction)
-
-        # TF listener
-        self._tf_listener = tf.TransformListener()
+        # Shared navigation client (handles TF + move_base connection)
+        self._nav = MoveBaseClient()
 
     # -----------------------------------------------------------------------
     # Main FSM
@@ -277,7 +275,7 @@ class TidyRoom:
         if not candidates:
             return None
 
-        robot_pos = self._get_robot_position()
+        robot_pos = self._nav.get_robot_position()
 
         if self._puck_selection == "color_order":
             # Sort by color (1→2→3), then distance
@@ -388,7 +386,7 @@ class TidyRoom:
 
     def _navigate_to_approach(self, puck):
         """Navigate to a point APPROACH_DIST metres from the puck, facing the puck."""
-        robot_pos = self._get_robot_position()
+        robot_pos = self._nav.get_robot_position()
         if robot_pos is None:
             rospy.logwarn("Cannot get robot position for approach")
             return False
@@ -398,20 +396,19 @@ class TidyRoom:
         dist = math.sqrt(dx * dx + dy * dy)
 
         if dist < APPROACH_DIST:
-            # Already close enough — no need to navigate
             return True
 
         ux, uy = dx / dist, dy / dist
         goal_x = puck.x - ux * APPROACH_DIST
         goal_y = puck.y - uy * APPROACH_DIST
-        yaw = math.atan2(uy, ux)  # face toward the puck
+        yaw = math.atan2(uy, ux)
 
-        return self._send_nav_goal(goal_x, goal_y, yaw=yaw, timeout=NAVIGATE_TO_PUCK_TIMEOUT)
+        return self._nav.go_to(goal_x, goal_y, yaw=yaw, timeout=NAVIGATE_TO_PUCK_TIMEOUT)
 
     def _navigate_to_corner(self, corner):
         """Navigate to a point CORNER_APPROACH_DIST metres from the corner, facing it.
         The robot stops here so drop_puck can drive forward to deposit at the corner."""
-        robot_pos = self._get_robot_position()
+        robot_pos = self._nav.get_robot_position()
         if robot_pos is None:
             rospy.logwarn("Cannot get robot position for corner approach")
             return False
@@ -423,49 +420,17 @@ class TidyRoom:
 
         goal_x = corner.x - ux * CORNER_APPROACH_DIST
         goal_y = corner.y - uy * CORNER_APPROACH_DIST
-        yaw = math.atan2(uy, ux)  # face toward the corner
+        yaw = math.atan2(uy, ux)
 
-        return self._send_nav_goal(goal_x, goal_y, yaw=yaw, timeout=NAVIGATE_TO_CORNER_TIMEOUT)
-
-    def _send_nav_goal(self, x, y, yaw=0.0, timeout=30.0):
-        q = tf.transformations.quaternion_from_euler(0, 0, yaw)
-        goal = MoveBaseGoal()
-        goal.target_pose.header.frame_id = "map"
-        goal.target_pose.header.stamp = rospy.Time.now()
-        goal.target_pose.pose.position.x = x
-        goal.target_pose.pose.position.y = y
-        goal.target_pose.pose.orientation = Quaternion(*q)
-
-        self._move_base.send_goal(goal)
-        finished = self._move_base.wait_for_result(rospy.Duration(timeout))
-        if not finished:
-            self._move_base.cancel_goal()
-            rospy.logwarn("Navigation timed out after %.0fs", timeout)
-            return False
-
-        state = self._move_base.get_state()
-        return state == GoalStatus.SUCCEEDED
+        return self._nav.go_to(goal_x, goal_y, yaw=yaw, timeout=NAVIGATE_TO_CORNER_TIMEOUT)
 
     # -----------------------------------------------------------------------
     # Utility helpers
     # -----------------------------------------------------------------------
 
-    def _get_robot_position(self):
-        """Returns (x, y) in map frame, or None on failure."""
-        try:
-            self._tf_listener.waitForTransform(
-                "map", "base_link", rospy.Time(0), rospy.Duration(1.0)
-            )
-            (trans, _) = self._tf_listener.lookupTransform("map", "base_link", rospy.Time(0))
-            return (trans[0], trans[1])
-        except (tf.Exception, tf.LookupException,
-                tf.ConnectivityException, tf.ExtrapolationException) as e:
-            rospy.logwarn("TF lookup failed: %s", e)
-            return None
-
     def _navigate_to_site(self, x, y):
         """Navigate to a previously visited location (CPFA site fidelity)."""
-        return self._send_nav_goal(x, y, timeout=NAVIGATE_TO_SITE_TIMEOUT)
+        return self._nav.go_to(x, y, timeout=NAVIGATE_TO_SITE_TIMEOUT)
 
     def _all_found(self, puck_registry, aruco_registry):
         return (len(puck_registry) >= self.num_pucks_expected and
@@ -492,30 +457,9 @@ def main():
     rospy.init_node('tidy_room')
     node = TidyRoom()
 
-    # Wait for the map frame first — gmapping needs a few seconds to publish
-    # map→odom. Without this, move_base can't initialize its costmap and
-    # its action server never starts.
-    rospy.loginfo("Waiting for TF map→base_link (gmapping to initialize)...")
-    while not rospy.is_shutdown():
-        try:
-            node._tf_listener.waitForTransform(
-                "map", "base_link", rospy.Time(0), rospy.Duration(5.0))
-            break
-        except (tf.Exception, tf.LookupException, tf.ConnectivityException):
-            rospy.logwarn("map→base_link not available yet, retrying...")
-    rospy.loginfo("TF map→base_link ready.")
-
-    # Wait for move_base to fully initialize (costmap + planner take ~10s after map frame)
-    rospy.loginfo("Waiting 10s for move_base to initialize costmaps...")
-    rospy.sleep(10.0)
-
-    # Recreate the action client now that move_base should be ready
-    node._move_base = actionlib.SimpleActionClient('move_base', MoveBaseAction)
-    rospy.loginfo("Waiting for move_base action server...")
-    if not node._move_base.wait_for_server(rospy.Duration(30.0)):
-        rospy.logfatal("move_base action server not available after 30s — aborting")
+    if not node._nav.wait_until_ready(timeout=60.0):
+        rospy.logfatal("Navigation not available — aborting")
         return
-    rospy.loginfo("move_base connected.")
     rospy.loginfo("Waiting for services...")
     for svc_name in ['/random_walk', '/center_puck', '/pick_puck',
                      '/drop_puck', '/update_puck_status']:
