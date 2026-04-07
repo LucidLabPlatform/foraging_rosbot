@@ -15,9 +15,9 @@
         <param name="angularUpdate"         value="0.1"/>
         <param name="temporalUpdate"        value="2.0"/>
     </node>
-    <!-- move_base costmap fails permanently if map frame doesn't exist at startup -->
+    <!-- move_base costmap breaks permanently if started before gmapping publishes /map -->
     <node pkg="move_base" type="move_base" respawn="false" name="move_base" output="screen"
-          launch-prefix="bash -c 'sleep 5; exec $0 $@' --">
+          launch-prefix="bash -c 'echo [move_base] waiting for /map...; rostopic echo /map -n1 >/dev/null 2>&amp;1; sleep 2; exec $0 $@' --">
         <rosparam file="$(find foraging_bringup)/config/move_base.yaml"       command="load"/>
         <rosparam file="$(find foraging_bringup)/config/costmap_common.yaml"  command="load" ns="global_costmap"/>
         <rosparam file="$(find foraging_bringup)/config/costmap_common.yaml"  command="load" ns="local_costmap"/>
