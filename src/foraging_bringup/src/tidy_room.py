@@ -457,7 +457,7 @@ def main():
     rospy.init_node('tidy_room')
     node = TidyRoom()
 
-    if not node._nav.wait_until_ready(timeout=60.0):
+    if not node._nav.wait_until_ready():
         rospy.logfatal("Navigation not available — aborting")
         return
     rospy.loginfo("Waiting for services...")

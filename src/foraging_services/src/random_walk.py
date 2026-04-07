@@ -51,7 +51,7 @@ class RandomWalkServer:
 
         # Navigation client (handles TF + move_base connection)
         self._nav = MoveBaseClient()
-        if not self._nav.wait_until_ready(timeout=60.0):
+        if not self._nav.wait_until_ready():
             rospy.logfatal("move_base not available — random walk cannot start")
             rospy.signal_shutdown("move_base not available")
             return

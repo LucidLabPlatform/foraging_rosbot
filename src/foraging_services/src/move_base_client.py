@@ -28,14 +28,14 @@ class MoveBaseClient:
         self._tf = tf.TransformListener()
         self._client = None
 
-    def wait_until_ready(self, timeout=60.0):
+    def wait_until_ready(self, tf_timeout=90.0, server_timeout=30.0):
         """Block until TF map->base_link and move_base action server are up.
-        Returns True when ready, False on timeout."""
-        deadline = rospy.Time.now() + rospy.Duration(timeout)
+        Each phase has its own timeout. Returns True when ready, False on timeout."""
 
-        # Phase 1: wait for TF
+        # Phase 1: wait for TF (gmapping can take 30-60s to start publishing)
         rospy.loginfo("[nav] Waiting for TF map -> base_link ...")
-        while not rospy.is_shutdown() and rospy.Time.now() < deadline:
+        tf_deadline = rospy.Time.now() + rospy.Duration(tf_timeout)
+        while not rospy.is_shutdown() and rospy.Time.now() < tf_deadline:
             try:
                 self._tf.waitForTransform(
                     "map", "base_link", rospy.Time(0), rospy.Duration(5.0))
@@ -45,15 +45,14 @@ class MoveBaseClient:
                 rospy.logwarn("[nav] TF not available yet, retrying ...")
         else:
             if not rospy.is_shutdown():
-                rospy.logerr("[nav] TF not available after %.0fs", timeout)
+                rospy.logerr("[nav] TF not available after %.0fs", tf_timeout)
             return False
 
-        # Phase 2: connect to move_base action server
-        remaining = max(1.0, (deadline - rospy.Time.now()).to_sec())
-        rospy.loginfo("[nav] Connecting to move_base (%.0fs left) ...", remaining)
+        # Phase 2: connect to move_base action server (full timeout, independent of phase 1)
+        rospy.loginfo("[nav] Connecting to move_base (%.0fs timeout) ...", server_timeout)
         self._client = actionlib.SimpleActionClient("move_base", MoveBaseAction)
-        if not self._client.wait_for_server(rospy.Duration(remaining)):
-            rospy.logerr("[nav] move_base not available")
+        if not self._client.wait_for_server(rospy.Duration(server_timeout)):
+            rospy.logerr("[nav] move_base not available after %.0fs", server_timeout)
             return False
 
         rospy.loginfo("[nav] move_base ready.")
