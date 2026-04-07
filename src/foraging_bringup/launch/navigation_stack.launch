@@ -1,80 +1,24 @@
 <launch>
-    <!-- ===== SLAM and NAV ===== -->
-    <node pkg="gmapping" type="slam_gmapping" name="gmapping_node" output="log">
-        <param name="base_frame"            value="base_link"/>
-        <param name="odom_frame"            value="odom"/>
-        <param name="map_update_interval"   value="1.5"/>
-        <param name="maxUrange"             value="15.0"/>
-        <param name="delta"                 value="0.03"/>
-        <param name="xmin"                  value="-10"/>
-        <param name="ymin"                  value="-10"/>
-        <param name="xmax"                  value="10"/>
-        <param name="ymax"                  value="10"/>
-        <!-- Publish map after very small movement so the map frame exists at startup -->
-        <param name="linearUpdate"          value="0.05"/>
-        <param name="angularUpdate"         value="0.1"/>
-        <param name="temporalUpdate"        value="2.0"/>
-    </node>
-    <!-- move_base costmap breaks permanently if started before gmapping publishes /map -->
-    <node pkg="move_base" type="move_base" respawn="false" name="move_base" output="screen"
-          launch-prefix="bash -c 'echo [move_base] waiting for /map...; rostopic echo /map -n1 >/dev/null 2>&amp;1; sleep 2; exec $0 $@' --">
-        <rosparam file="$(find foraging_bringup)/config/move_base.yaml"       command="load"/>
-        <rosparam file="$(find foraging_bringup)/config/costmap_common.yaml"  command="load" ns="global_costmap"/>
-        <rosparam file="$(find foraging_bringup)/config/costmap_common.yaml"  command="load" ns="local_costmap"/>
-        <rosparam file="$(find foraging_bringup)/config/costmap_global.yaml"  command="load"/>
-        <rosparam file="$(find foraging_bringup)/config/costmap_local.yaml"   command="load"/>
-        <rosparam file="$(find foraging_bringup)/config/planner_global.yaml"  command="load"/>
-        <rosparam file="$(find foraging_bringup)/config/planner_local.yaml"   command="load"/>
-    </node>
+    <arg name="open_rviz" default="true"/>
 
+    <!-- ===== SLAM ===== -->
+    <include file="$(find foraging_bringup)/launch/gmapping.launch"/>
 
+    <!-- ===== Navigation ===== -->
+    <include file="$(find foraging_bringup)/launch/move_base.launch"/>
 
-    <!-- ===== FORAGING BEHAVIOUR ===== -->
+    <!-- ===== Perception (puck + ArUco pipelines) ===== -->
+    <include file="$(find foraging_bringup)/launch/perception.launch"/>
 
-    <!-- ===== find pucks ===== -->
-    <node pkg="foraging_puck" type="1_perception_node.py" name="perception_node"  output="screen">
-    </node>
-    <node pkg="foraging_puck" type="2_depth_perception_node.py" name="puck_depth_node"  output="screen">
-    </node>
-    <node pkg="foraging_puck" type="3_puck_global_pos.py" name="puck_localization_node"  output="screen">
-    </node>
-    <node pkg="foraging_puck" type="4_pub_puck_tf.py" name="puck_tf_broadcaster_node"  output="screen">
-    </node>
-    <!-- ===== put pucks TF as obstacles ===== -->
-    <node pkg="foraging_puck" type="5_puck_obstacle_publisher.py" name="puck_obstacle_publisher"  output="screen">
-    </node>
-    <!-- ==== find aruco ===== -->
-    <node pkg="foraging_aruco" type="1_aruco_perception_node.py" name="aruco_perception_node"  output="screen"> 
-    </node>
-    <node pkg="foraging_aruco" type="2_aruco_depth_node.py" name="aruco_depth_node"  output="screen">
-    </node>
-    <node pkg="foraging_aruco" type="3_aruco_global_pos.py" name="aruco_localization_node"  output="screen">
-    </node>
-    <node pkg="foraging_aruco" type="4_pub_aruco_tf.py" name="aruco_tf_broadcaster_node"  output="screen">
-    </node>
+    <!-- ===== Foraging service servers ===== -->
+    <include file="$(find foraging_bringup)/launch/services.launch"/>
 
-  <!-- Foraging action servers -->
-  <node name="pick_puck_server"   pkg="foraging_services" type="pick_puck_server.py"   output="screen"/>
-  <node name="drop_puck_server"   pkg="foraging_services" type="drop_puck_server.py"   output="screen"/>
-  <node name="center_puck_server" pkg="foraging_services" type="center_puck.py"        output="screen"/>
-  <node name="random_walk_server" pkg="foraging_services" type="random_walk.py"        output="screen"/>
-
-  <!-- Autonomous foraging orchestrator (disabled by default — launch separately with params) -->
-  <!--
-  <node name="tidy_room" pkg="foraging_bringup" type="tidy_room.py" output="screen">
-    <param name="num_pucks_expected" value="6"/>
-    <param name="explore_puck_pct"   value="0.5"/>
-    <param name="explore_corner_pct" value="0.67"/>
-  </node>
-  -->
-
-    <!-- ===== while conditions not satisfied -> move around random, explore, find pucks, and corners ===== -->
-    <!-- ===== when conditions satisfied -> go grab pucks one by one and bring them to their respective homes ===== -->
-
-
+    <!-- ===== Visualization ===== -->
     <!-- robot_state_publisher and joint_state_publisher are NOT launched here
          because the ROSbot Docker containers already publish the full TF tree
-         (odom → base_link → all sensors). Running a second instance corrupts TF. -->
-    <node pkg="rviz" type="rviz" name="rviz" args="-d $(find foraging_bringup)/rviz/foraging_rviz_config.rviz"/>
-
+         (odom -> base_link -> all sensors). Running a second instance corrupts TF. -->
+    <group if="$(arg open_rviz)">
+        <node pkg="rviz" type="rviz" name="rviz"
+              args="-d $(find foraging_bringup)/rviz/foraging_rviz_config.rviz"/>
+    </group>
 </launch>
