@@ -53,13 +53,28 @@ class MoveBaseClient:
         # stuck, so we retry with a fresh client every few seconds.
         rospy.loginfo("[nav] Connecting to move_base (%.0fs timeout) ...", server_timeout)
         deadline = rospy.Time.now() + rospy.Duration(server_timeout)
+        attempt = 0
         while not rospy.is_shutdown() and rospy.Time.now() < deadline:
+            attempt += 1
             self._client = actionlib.SimpleActionClient("move_base", MoveBaseAction)
             remaining = max(1.0, (deadline - rospy.Time.now()).to_sec())
-            if self._client.wait_for_server(rospy.Duration(min(5.0, remaining))):
-                rospy.loginfo("[nav] move_base ready.")
+            wait_time = min(5.0, remaining)
+            rospy.loginfo("[nav] attempt %d: waiting %.1fs for action server ...", attempt, wait_time)
+
+            # Check if the status topic has any publishers
+            try:
+                status_pubs = rospy.get_published_topics()
+                has_status = any(t[0] == '/move_base/status' for t in status_pubs)
+                has_goal = any(t[0] == '/move_base/goal' for t in status_pubs)
+                rospy.loginfo("[nav] attempt %d: /move_base/status published=%s, /move_base/goal published=%s",
+                              attempt, has_status, has_goal)
+            except Exception as e:
+                rospy.logwarn("[nav] attempt %d: could not check topics: %s", attempt, e)
+
+            if self._client.wait_for_server(rospy.Duration(wait_time)):
+                rospy.loginfo("[nav] move_base ready (attempt %d).", attempt)
                 return True
-            rospy.logwarn("[nav] move_base not responding, retrying ...")
+            rospy.logwarn("[nav] attempt %d: move_base not responding, retrying ...", attempt)
 
         rospy.logerr("[nav] move_base not available after %.0fs", server_timeout)
         return False
