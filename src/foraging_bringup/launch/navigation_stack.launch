@@ -1,11 +1,10 @@
 <launch>
     <arg name="open_rviz" default="true"/>
 
-    <!-- gmapping must be launched separately FIRST (gmapping.launch)
-         so its TF tree is active before move_base subscribes. -->
-
-    <!-- ===== Navigation ===== -->
-    <include file="$(find foraging_bringup)/launch/move_base.launch"/>
+    <!-- gmapping and move_base must be launched separately FIRST:
+         1) roslaunch foraging_bringup gmapping.launch
+         2) roslaunch foraging_bringup move_base.launch
+         Then launch this file (via foraging_experiment.launch). -->
 
     <!-- ===== Perception (puck + ArUco pipelines) ===== -->
     <include file="$(find foraging_bringup)/launch/perception.launch"/>
