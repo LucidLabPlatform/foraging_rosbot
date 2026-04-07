@@ -28,7 +28,7 @@ class MoveBaseClient:
         self._tf = tf.TransformListener()
         self._client = None
 
-    def wait_until_ready(self, tf_timeout=90.0, server_timeout=30.0):
+    def wait_until_ready(self, tf_timeout=90.0, server_timeout=90.0):
         """Block until TF map->base_link and move_base action server are up.
         Each phase has its own timeout. Returns True when ready, False on timeout."""
 
