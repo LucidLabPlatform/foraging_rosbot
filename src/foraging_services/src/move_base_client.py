@@ -48,15 +48,21 @@ class MoveBaseClient:
                 rospy.logerr("[nav] TF not available after %.0fs", tf_timeout)
             return False
 
-        # Phase 2: connect to move_base action server (full timeout, independent of phase 1)
+        # Phase 2: connect to move_base action server.
+        # Creating a SimpleActionClient before the server exists can leave it
+        # stuck, so we retry with a fresh client every few seconds.
         rospy.loginfo("[nav] Connecting to move_base (%.0fs timeout) ...", server_timeout)
-        self._client = actionlib.SimpleActionClient("move_base", MoveBaseAction)
-        if not self._client.wait_for_server(rospy.Duration(server_timeout)):
-            rospy.logerr("[nav] move_base not available after %.0fs", server_timeout)
-            return False
+        deadline = rospy.Time.now() + rospy.Duration(server_timeout)
+        while not rospy.is_shutdown() and rospy.Time.now() < deadline:
+            self._client = actionlib.SimpleActionClient("move_base", MoveBaseAction)
+            remaining = max(1.0, (deadline - rospy.Time.now()).to_sec())
+            if self._client.wait_for_server(rospy.Duration(min(5.0, remaining))):
+                rospy.loginfo("[nav] move_base ready.")
+                return True
+            rospy.logwarn("[nav] move_base not responding, retrying ...")
 
-        rospy.loginfo("[nav] move_base ready.")
-        return True
+        rospy.logerr("[nav] move_base not available after %.0fs", server_timeout)
+        return False
 
     def go_to(self, x, y, yaw=0.0, timeout=30.0):
         """Navigate to (x, y, yaw) in map frame. Returns True on success."""
