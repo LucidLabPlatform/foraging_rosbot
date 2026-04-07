@@ -1,10 +1,11 @@
 <launch>
     <arg name="open_rviz" default="true"/>
 
-    <!-- gmapping and move_base must be launched separately FIRST:
-         1) roslaunch foraging_bringup gmapping.launch
-         2) roslaunch foraging_bringup move_base.launch
-         Then launch this file (via foraging_experiment.launch). -->
+    <!-- ===== SLAM ===== -->
+    <include file="$(find foraging_bringup)/launch/gmapping.launch"/>
+
+    <!-- ===== Navigation ===== -->
+    <include file="$(find foraging_bringup)/launch/move_base.launch"/>
 
     <!-- ===== Perception (puck + ArUco pipelines) ===== -->
     <include file="$(find foraging_bringup)/launch/perception.launch"/>
