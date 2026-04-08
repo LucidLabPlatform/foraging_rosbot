@@ -310,19 +310,24 @@ class TidyRoom:
                       puck.id, puck.color, puck.x, puck.y)
         pick_start_s = round(time.time() - self._start_time, 1)
 
-        # Step 1: Navigate to approach point
-        if not self._navigate_to_approach(puck):
-            rospy.logwarn("Failed to reach approach point for puck %d", puck.id)
-            return False
-
-        # Step 2: Center puck visually
-        try:
-            resp = self._center_puck(puck.color)
-            if not resp.success:
-                rospy.logwarn("center_puck failed for puck %d", puck.id)
-                return False
-        except rospy.ServiceException as e:
-            rospy.logwarn("center_puck service error: %s", e)
+        # Step 1+2: Approach and center — retry from different angles if puck not visible
+        centered = False
+        for angle_offset in [0, math.pi / 2, -math.pi / 2, math.pi]:
+            if not self._navigate_to_approach(puck, angle_offset=angle_offset):
+                rospy.logwarn("Failed to reach approach point for puck %d (offset=%.0f°)",
+                              puck.id, math.degrees(angle_offset))
+                continue
+            try:
+                resp = self._center_puck(puck.color)
+                if resp.success:
+                    centered = True
+                    break
+                rospy.logwarn("center_puck failed for puck %d (offset=%.0f°), retrying",
+                              puck.id, math.degrees(angle_offset))
+            except rospy.ServiceException as e:
+                rospy.logwarn("center_puck service error: %s", e)
+        if not centered:
+            rospy.logwarn("Could not find puck %d from any angle", puck.id)
             return False
 
         # Step 3: Pick up
@@ -407,8 +412,9 @@ class TidyRoom:
     # Navigation helpers
     # -----------------------------------------------------------------------
 
-    def _navigate_to_approach(self, puck):
-        """Navigate to a point APPROACH_DIST metres from the puck, facing the puck."""
+    def _navigate_to_approach(self, puck, angle_offset=0):
+        """Navigate to a point APPROACH_DIST metres from the puck, facing the puck.
+        angle_offset rotates the approach direction around the puck."""
         robot_pos = self._nav.get_robot_position()
         if robot_pos is None:
             rospy.logwarn("Cannot get robot position for approach")
@@ -418,13 +424,15 @@ class TidyRoom:
         dy = puck.y - robot_pos[1]
         dist = math.sqrt(dx * dx + dy * dy)
 
-        if dist < APPROACH_DIST:
+        if dist < APPROACH_DIST and angle_offset == 0:
             return True
 
-        ux, uy = dx / dist, dy / dist
-        goal_x = puck.x - ux * APPROACH_DIST
-        goal_y = puck.y - uy * APPROACH_DIST
-        yaw = math.atan2(uy, ux)
+        # Direction from puck to robot, then rotate by offset
+        base_angle = math.atan2(-dy, -dx)
+        approach_angle = base_angle + angle_offset
+        goal_x = puck.x + APPROACH_DIST * math.cos(approach_angle)
+        goal_y = puck.y + APPROACH_DIST * math.sin(approach_angle)
+        yaw = math.atan2(puck.y - goal_y, puck.x - goal_x)
 
         return self._nav.go_to(goal_x, goal_y, yaw=yaw, timeout=NAVIGATE_TO_PUCK_TIMEOUT)
 
