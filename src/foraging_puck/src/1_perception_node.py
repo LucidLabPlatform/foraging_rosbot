@@ -22,9 +22,9 @@ CROP_TOP_FRACTION = 0.5     # Discard this fraction from the top of the image
 MIN_CONTOUR_AREA = 200      # Minimum area of contour to be considered a puck
 MAX_CONTOUR_AREA = 10000     # Maximum area of contour to be considered a puck
 HSV_BOUNDS = {
-    "red":   [(np.array([  0, 105,   0]), np.array([ 15, 255, 255])),
-              (np.array([165, 105,   0]), np.array([180, 255, 255]))],
-    "green": [(np.array([ 35,  20,   0]), np.array([ 80, 255, 255]))],
+    "red":   [(np.array([  0, 105,   10]), np.array([ 15, 255, 255])),
+              (np.array([165, 70,   0]), np.array([180, 255, 255]))],
+    "green": [(np.array([ 35,  40,   20]), np.array([ 80, 255, 255]))],
     "blue":  [(np.array([ 90, 160,   0]), np.array([130, 255, 255]))],
 }
 KERNEL = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
