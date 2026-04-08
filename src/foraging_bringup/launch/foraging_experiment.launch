@@ -9,9 +9,16 @@
   <arg name="num_pucks"          default="6"/>
   <arg name="num_corners"        default="3"/>
   <arg name="puck_selection"     default="closest"/>
+  <arg name="puck_confirm_hits"  default="3"/>
+  <arg name="puck_cluster_r"     default="0.3"/>
+  <arg name="puck_stale_timeout" default="5.0"/>
 
   <!-- ===== Navigation stack + perception + services ===== -->
-  <include file="$(find foraging_bringup)/launch/navigation_stack.launch"/>
+  <include file="$(find foraging_bringup)/launch/navigation_stack.launch">
+      <arg name="puck_confirm_hits"  value="$(arg puck_confirm_hits)"/>
+      <arg name="puck_cluster_r"     value="$(arg puck_cluster_r)"/>
+      <arg name="puck_stale_timeout" value="$(arg puck_stale_timeout)"/>
+  </include>
 
   <!-- Override random_walk_server CRW param -->
   <param name="/random_walk_server/walk_sigma" value="$(arg walk_sigma)"/>

@@ -1,8 +1,16 @@
 <launch>
+    <arg name="puck_confirm_hits"  default="3"/>
+    <arg name="puck_cluster_r"     default="0.3"/>
+    <arg name="puck_stale_timeout" default="5.0"/>
+
     <!-- ===== Puck detection pipeline ===== -->
     <node pkg="foraging_puck" type="1_perception_node.py"          name="perception_node"          output="screen"/>
     <node pkg="foraging_puck" type="2_depth_perception_node.py"    name="puck_depth_node"          output="screen"/>
-    <node pkg="foraging_puck" type="3_puck_global_pos.py"          name="puck_localization_node"    output="screen"/>
+    <node pkg="foraging_puck" type="3_puck_global_pos.py"          name="puck_localization_node"    output="screen">
+        <param name="confirm_hits"  value="$(arg puck_confirm_hits)"/>
+        <param name="cluster_r"     value="$(arg puck_cluster_r)"/>
+        <param name="stale_timeout" value="$(arg puck_stale_timeout)"/>
+    </node>
     <node pkg="foraging_puck" type="4_pub_puck_tf.py"              name="puck_tf_broadcaster_node"  output="screen"/>
     <node pkg="foraging_puck" type="5_puck_obstacle_publisher.py"  name="puck_obstacle_publisher"   output="screen"/>
 

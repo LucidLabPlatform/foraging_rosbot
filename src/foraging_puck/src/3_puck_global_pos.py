@@ -44,9 +44,9 @@ FIXED_FRAME = "map"
 TF_TIMEOUT  = rospy.Duration(0.15)
 
 # ─── Clustering / confirmation params ────────────────────────────────────────
-CLUSTER_R      = 0.3   # metres — observations within this radius are the same puck
-CONFIRM_HITS   = 3     # number of observations before a puck is "confirmed"
-STALE_TIMEOUT  = rospy.Duration(5.0)  # drop tracks not updated within this time
+CLUSTER_R_DEFAULT      = 0.3   # metres — observations within this radius are the same puck
+CONFIRM_HITS_DEFAULT   = 3     # number of observations before a puck is "confirmed"
+STALE_TIMEOUT_DEFAULT  = 5.0   # seconds — drop tracks not updated within this time
 EWMA_ALPHA     = 0.5   # weight for exponential moving average (0.0 to 1.0)
 
 # ─── Home filter ─────────────────────────────────────────────────────────────
@@ -283,6 +283,11 @@ def main():
     global pub, pub_registry, tf_buffer, tf_listener
 
     rospy.init_node("puck_localization_node")
+
+    global CLUSTER_R, CONFIRM_HITS, STALE_TIMEOUT
+    CLUSTER_R     = rospy.get_param('~cluster_r', CLUSTER_R_DEFAULT)
+    CONFIRM_HITS  = rospy.get_param('~confirm_hits', CONFIRM_HITS_DEFAULT)
+    STALE_TIMEOUT = rospy.Duration(rospy.get_param('~stale_timeout', STALE_TIMEOUT_DEFAULT))
 
     tf_buffer   = tf2_ros.Buffer(rospy.Duration(10.0))
     tf_listener = tf2_ros.TransformListener(tf_buffer)
