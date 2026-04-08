@@ -11,6 +11,7 @@ import math
 import threading
 import rospkg
 from std_msgs.msg import String
+from geometry_msgs.msg import Twist
 from foraging_msgs.msg import PuckRegistry, ArucoRegistry
 from foraging_msgs.srv import (RandomWalkServerMessage, RandomWalkServerMessageRequest,
                                 CenterPuckServerMessage, CenterPuckServerMessageRequest,
@@ -26,13 +27,13 @@ from move_base_client import MoveBaseClient
 # Physical constants (unlikely to change between experiments)
 # ---------------------------------------------------------------------------
 APPROACH_DIST              = 0.35   # must exceed puck obstacle radius (0.10) + inflation (0.15)
-PICK_DISTANCE              = 0.20   # +0.05 in server = 0.25m actual; from 0.35m approach → 0.10m from puck
+PICK_DISTANCE              = 0.30
 PICK_SPEED                 = 0.1
 DROP_DISTANCE              = 0.25
 DROP_SPEED                 = 0.1
 NAVIGATE_TO_PUCK_TIMEOUT   = 30.0   # seconds
 NAVIGATE_TO_CORNER_TIMEOUT = 30.0
-CORNER_APPROACH_DIST       = 0.20   # just outside footprint lethal zone (0.17m)
+CORNER_APPROACH_DIST       = 0.30   # move_base navigates here, then cmd_vel covers the rest
 NAVIGATE_TO_SITE_TIMEOUT   = 30.0   # timeout for site fidelity navigation
 
 
@@ -348,7 +349,7 @@ class TidyRoom:
             rospy.logwarn("Failed to reach corner for puck %d", puck.id)
             # Puck is already picked — still drop it so gripper is free
             try:
-                self._drop_puck(DROP_DISTANCE, DROP_SPEED)
+                self._drop_puck(DROP_DISTANCE, DROP_SPEED, 0.0)
             except rospy.ServiceException:
                 pass
             # Revert puck status since delivery failed
@@ -360,7 +361,7 @@ class TidyRoom:
 
         # Step 5: Drop puck
         try:
-            resp = self._drop_puck(DROP_DISTANCE, DROP_SPEED)
+            resp = self._drop_puck(DROP_DISTANCE, DROP_SPEED, CORNER_APPROACH_DIST)
             if not resp.success:
                 rospy.logwarn("drop_puck service call returned failure for puck %d", puck.id)
                 return False

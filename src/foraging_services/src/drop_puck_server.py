@@ -64,9 +64,31 @@ def turn_180():
     rospy.loginfo("Turn complete")
 
 
+def move_forward(distance, speed):
+    if distance <= 0 or speed <= 0:
+        return
+    duration = distance / speed
+    cmd_vel_msg = Twist()
+    rate = rospy.Rate(10)
+    rospy.loginfo(f"Moving forward {distance} m at {speed} m/s for {duration:.2f} s")
+    start_time = rospy.Time.now()
+    while not rospy.is_shutdown() and (rospy.Time.now() - start_time).to_sec() < duration:
+        cmd_vel_msg.linear.x = speed
+        cmd_vel_pub.publish(cmd_vel_msg)
+        rate.sleep()
+    cmd_vel_msg.linear.x = 0.0
+    cmd_vel_pub.publish(cmd_vel_msg)
+
+
 def handle_drop_puck(req):
     try:
-        rospy.loginfo(f"Drop puck service called — distance={req.distance}, speed={req.speed}")
+        rospy.loginfo(f"Drop puck service called — distance={req.distance}, speed={req.speed}, "
+                      f"forward_distance={req.forward_distance}")
+
+        # Drive forward to the corner before dropping
+        if req.forward_distance > 0:
+            rospy.loginfo("Driving forward to drop point...")
+            move_forward(req.forward_distance, req.speed)
 
         rospy.loginfo("Opening gripper...")
         open_gripper()
