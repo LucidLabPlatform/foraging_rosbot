@@ -156,6 +156,15 @@ class RandomWalkServer:
             # Try to find a free direction: random angle → rotate → let move_base check path
             direction_found = False
             for attempt in range(MAX_ORIENTATION_TRIES):
+                # Early exit if thresholds met during step
+                with self._count_lock:
+                    if self._puck_count >= num_pucks and self._corner_count >= num_corners:
+                        rospy.loginfo(
+                            f"Thresholds met mid-step — pucks={self._puck_count}/{num_pucks}, "
+                            f"corners={self._corner_count}/{num_corners}. Done."
+                        )
+                        return RandomWalkServerMessageResponse(done=True)
+
                 if self._walk_sigma > 0 and self._last_heading is not None:
                     delta = random.gauss(0, self._walk_sigma)
                     world_angle = self._last_heading + delta

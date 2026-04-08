@@ -111,7 +111,7 @@ def callback_depth(msg: CompressedImage):
             continue
 
         distance_m = distance_mm / 1000.0
-        rospy.loginfo(f"Puck color={puck.color} at ({cx},{cy_full}) → {distance_m:.3f}m")
+        # rospy.loginfo(f"Puck color={puck.color} at ({cx},{cy_full}) → {distance_m:.3f}m")
 
         out          = PuckDetected()
         out.header   = puck.header

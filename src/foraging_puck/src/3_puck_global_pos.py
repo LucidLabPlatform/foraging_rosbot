@@ -240,8 +240,8 @@ def callback_detected(msg: PuckDetected):
     p["hits"] += 1
     p["last_seen"] = rospy.Time.now()
 
-    rospy.logdebug("Puck %d | color=%d | hits=%d | pos=(%.2f, %.2f, %.2f)",
-                   p["id"], color, p["hits"], p["x"], p["y"], p["z"])
+    # rospy.logdebug("Puck %d | color=%d | hits=%d | pos=(%.2f, %.2f, %.2f)",
+    #                p["id"], color, p["hits"], p["x"], p["y"], p["z"])
 
     # 5. First time we reach CONFIRM_HITS: publish confirmed puck + update registry
     if not p["confirmed"] and p["hits"] >= CONFIRM_HITS:
