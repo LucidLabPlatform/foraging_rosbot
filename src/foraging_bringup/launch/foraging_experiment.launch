@@ -12,6 +12,8 @@
   <arg name="puck_confirm_hits"  default="3"/>
   <arg name="puck_cluster_r"     default="0.3"/>
   <arg name="puck_stale_timeout" default="5.0"/>
+  <arg name="max_vel_x"          default="0.07"/>
+  <arg name="max_vel_theta"      default="0.3"/>
 
   <!-- ===== Navigation stack + perception + services ===== -->
   <include file="$(find foraging_bringup)/launch/navigation_stack.launch">
@@ -23,6 +25,10 @@
   <!-- Override random_walk_server CRW param -->
   <param name="/random_walk_server/walk_sigma" value="$(arg walk_sigma)"/>
   <param name="/random_walk_server/step_size" value="$(arg step_size)"/>
+
+  <!-- Override move_base velocity limits -->
+  <param name="/move_base/TrajectoryPlannerROS/max_vel_x"     value="$(arg max_vel_x)"/>
+  <param name="/move_base/TrajectoryPlannerROS/max_vel_theta"  value="$(arg max_vel_theta)"/>
 
   <!-- ===== Foraging orchestrator ===== -->
   <node name="tidy_room" pkg="foraging_bringup" type="tidy_room.py" output="screen">
