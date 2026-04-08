@@ -345,8 +345,19 @@ class TidyRoom:
             pass
 
         # Step 4: Navigate to corner
+        robot_pos = self._nav.get_robot_position()
+        dx = corner.x - (robot_pos[0] if robot_pos else 0)
+        dy = corner.y - (robot_pos[1] if robot_pos else 0)
+        dist = math.sqrt(dx * dx + dy * dy)
+        ux, uy = (dx / dist, dy / dist) if dist > 0 else (0, 0)
+        goal_x = corner.x - ux * CORNER_APPROACH_DIST
+        goal_y = corner.y - uy * CORNER_APPROACH_DIST
+        rospy.loginfo("Corner approach: robot=(%.2f, %.2f) corner=(%.2f, %.2f) goal=(%.2f, %.2f) dist=%.2f",
+                      robot_pos[0] if robot_pos else 0, robot_pos[1] if robot_pos else 0,
+                      corner.x, corner.y, goal_x, goal_y, dist)
         if not self._navigate_to_corner(corner):
-            rospy.logwarn("Failed to reach corner for puck %d", puck.id)
+            rospy.logwarn("Failed to reach corner for puck %d — goal was (%.2f, %.2f), %.2fm from corner",
+                          puck.id, goal_x, goal_y, CORNER_APPROACH_DIST)
             # Puck is already picked — still drop it so gripper is free
             try:
                 self._drop_puck(DROP_DISTANCE, DROP_SPEED, 0.0)
