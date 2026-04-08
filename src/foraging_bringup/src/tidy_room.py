@@ -337,12 +337,23 @@ class TidyRoom:
         rospy.loginfo("Puck %d picked. Navigating to corner at (%.2f, %.2f)",
                       puck.id, corner.x, corner.y)
 
+        # Step 3b: Remove puck from obstacle cloud so robot can navigate freely
+        try:
+            self._update_puck_status(puck.id, 1, puck.x, puck.y)
+        except rospy.ServiceException:
+            pass
+
         # Step 4: Navigate to corner
         if not self._navigate_to_corner(corner):
             rospy.logwarn("Failed to reach corner for puck %d", puck.id)
             # Puck is already picked — still drop it so gripper is free
             try:
                 self._drop_puck(DROP_DISTANCE, DROP_SPEED)
+            except rospy.ServiceException:
+                pass
+            # Revert puck status since delivery failed
+            try:
+                self._update_puck_status(puck.id, 0, puck.x, puck.y)
             except rospy.ServiceException:
                 pass
             return False
@@ -357,7 +368,7 @@ class TidyRoom:
             rospy.logwarn("drop_puck service error: %s", e)
             return False
 
-        # Step 6: Update status in registry
+        # Step 6: Update final position in registry
         try:
             resp = self._update_puck_status(puck.id, 1, corner.x, corner.y)
             if resp.success:
