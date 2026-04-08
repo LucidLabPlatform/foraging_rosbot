@@ -3,6 +3,7 @@
   <arg name="trial_duration"     default="1200"/>
   <arg name="site_fidelity_rate" default="0.5"/>
   <arg name="walk_sigma"         default="0.5"/>
+  <arg name="step_size"          default="1.5"/>
   <arg name="explore_puck_pct"   default="0.5"/>
   <arg name="explore_corner_pct" default="0.67"/>
   <arg name="num_pucks"          default="6"/>
@@ -14,6 +15,7 @@
 
   <!-- Override random_walk_server CRW param -->
   <param name="/random_walk_server/walk_sigma" value="$(arg walk_sigma)"/>
+  <param name="/random_walk_server/step_size" value="$(arg step_size)"/>
 
   <!-- ===== Foraging orchestrator ===== -->
   <node name="tidy_room" pkg="foraging_bringup" type="tidy_room.py" output="screen">

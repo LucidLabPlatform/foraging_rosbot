@@ -39,7 +39,7 @@ FIXED_FRAME = "map"
 TF_TIMEOUT  = rospy.Duration(0.15)
 
 # ─── Clustering / confirmation params ────────────────────────────────────────
-CONFIRM_HITS  = 3              # observations before a marker is "confirmed"
+CONFIRM_HITS  = 2             # observations before a marker is "confirmed"
 STALE_TIMEOUT = rospy.Duration(5.0)
 EWMA_ALPHA    = 0.5            # weight for exponential moving average
 

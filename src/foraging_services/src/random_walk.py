@@ -21,13 +21,13 @@ from geometry_msgs.msg import Twist
 from move_base_client import MoveBaseClient
 
 # ── Parameters ────────────────────────────────────────────────────────────────
-STEP_SIZE             = 0.7   # meters per step
+STEP_SIZE_DEFAULT     = 0.7   # meters per step (overridable via ~step_size param)
 STEP_TIMEOUT          = 10    # seconds — timeout for each move_base goal
 MAX_ORIENTATION_TRIES = 12    # max attempts to find a free direction per step
 ANGULAR_SPEED         = 0.6   # rad/s for in-place rotation
 YAW_TOLERANCE         = 0.1   # rad — acceptable error when rotating to target yaw
 ROTATE_TIMEOUT        = 8.0   # seconds — max time to complete an in-place rotation
-PAUSE_AFTER_STEP      = 2.0   # seconds to pause after each step to allow puck detection
+PAUSE_AFTER_STEP      = 5.0   # seconds to pause after each step to allow puck detection
 
 
 class RandomWalkServer:
@@ -40,6 +40,7 @@ class RandomWalkServer:
         # are drawn from N(previous_heading, sigma) instead of uniform.
         # This produces a CPFA-style correlated random walk (CRW).
         self._walk_sigma = rospy.get_param('~walk_sigma', 0.0)
+        self._step_size = rospy.get_param('~step_size', STEP_SIZE_DEFAULT)
         self._last_heading = None
 
         # Subscribers
@@ -160,8 +161,8 @@ class RandomWalkServer:
                     world_angle = self._last_heading + delta
                 else:
                     world_angle = random.uniform(-math.pi, math.pi) + robot_yaw
-                goal_x = robot_x + STEP_SIZE * math.cos(world_angle)
-                goal_y = robot_y + STEP_SIZE * math.sin(world_angle)
+                goal_x = robot_x + self._step_size * math.cos(world_angle)
+                goal_y = robot_y + self._step_size * math.sin(world_angle)
 
                 # Rotate robot to face this direction
                 if not self._rotate_to_yaw(world_angle):
@@ -173,8 +174,8 @@ class RandomWalkServer:
                 pose = self._nav.get_robot_pose()
                 if pose is not None:
                     robot_x, robot_y, _ = pose
-                    goal_x = robot_x + STEP_SIZE * math.cos(world_angle)
-                    goal_y = robot_y + STEP_SIZE * math.sin(world_angle)
+                    goal_x = robot_x + self._step_size * math.cos(world_angle)
+                    goal_y = robot_y + self._step_size * math.sin(world_angle)
 
                 # Send goal — move_base returns ABORTED if no valid path can be planned
                 rospy.logdebug(
