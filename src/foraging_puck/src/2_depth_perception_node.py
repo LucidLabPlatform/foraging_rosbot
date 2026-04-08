@@ -21,7 +21,6 @@ from foraging_msgs.msg import RawPuckDetected, PuckDetected
 
 DEBUG = True
 CROP_TOP_FRACTION    = 0.5   # Must match perception_node.py
-CIRCLE_MASK_SCALE    = 0.8   # Sample inner 80% of detected circle to avoid edge pixels
 DEPTH_CLUSTER_TOL_MM  = 150  # Readings within 150mm are considered the same surface
 MIN_CLUSTER_SAMPLES   = 5    # Minimum readings in dominant cluster to trust the depth
 MIN_VALID_DEPTH_RATIO = 0.5  # Skip puck if fewer than 50% of circle pixels have valid depth
@@ -73,14 +72,13 @@ def callback_depth(msg: CompressedImage):
             rospy.logwarn_throttle(2, "Puck center is above crop line — skipping")
             continue
 
-        radius = int(puck.radius * CIRCLE_MASK_SCALE)
-        if radius < 1:
-            rospy.logwarn_throttle(2, "Puck radius too small — skipping")
+        # Build mask from contour
+        if len(puck.contour_x) < 3:
+            rospy.logwarn_throttle(2, "Puck contour too small — skipping")
             continue
-
-        # Build circular mask and sample only pixels inside the puck shape
         mask = np.zeros((cropped_h, w), dtype=np.uint8)
-        cv2.circle(mask, (cx, cy_cropped), radius, 255, -1)
+        pts = np.column_stack((puck.contour_x, puck.contour_y)).astype(np.int32)
+        cv2.fillPoly(mask, [pts], 255)
 
         masked_depth = depth_cropped.copy()
         masked_depth[mask == 0] = 0
@@ -125,7 +123,7 @@ def callback_depth(msg: CompressedImage):
 
         if DEBUG:
             color_bgr = COLOR_BGR.get(puck.color, (255, 255, 255))
-            cv2.circle(display, (cx, cy_cropped), radius, color_bgr, 1)  # sampling circle outline
+            cv2.polylines(display, [pts], True, color_bgr, 1)
             cv2.circle(display, (cx, cy_cropped), 6, color_bgr, -1)      # center dot
             cv2.putText(display, f"{distance_m:.2f}m", (cx + 8, cy_cropped - 6),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.5, color_bgr, 2)
