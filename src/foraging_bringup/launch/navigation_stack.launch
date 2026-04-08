@@ -13,10 +13,13 @@
     <!-- ===== Foraging service servers ===== -->
     <include file="$(find foraging_bringup)/launch/services.launch"/>
 
+    <!-- ===== Robot description (URDF with gripper) ===== -->
+    <param name="robot_description"
+           command="$(find xacro)/xacro '$(find rosbot_description)/urdf/rosbot.xacro'"/>
+    <node name="joint_state_publisher" pkg="joint_state_publisher" type="joint_state_publisher"/>
+    <node name="robot_state_publisher" pkg="robot_state_publisher" type="robot_state_publisher"/>
+
     <!-- ===== Visualization ===== -->
-    <!-- robot_state_publisher and joint_state_publisher are NOT launched here
-         because the ROSbot Docker containers already publish the full TF tree
-         (odom -> base_link -> all sensors). Running a second instance corrupts TF. -->
     <group if="$(arg open_rviz)">
         <node pkg="rviz" type="rviz" name="rviz"
               args="-d $(find foraging_bringup)/rviz/foraging_rviz_config.rviz"/>

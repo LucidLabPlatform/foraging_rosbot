@@ -1,6 +1,0 @@
-[submodule "src/rosbot_ros"]
-	path = src/rosbot_ros
-	url = https://github.com/LucidLabPlatform/rosbot_ros.git
-[submodule "src/tutorial_pkg"]
-	path = src/tutorial_pkg
-	url = https://github.com/husarion/tutorial_pkg.git
