@@ -25,7 +25,7 @@ from geometry_msgs.msg import Twist
 from foraging_msgs.srv import CenterPuckServerMessage, CenterPuckServerMessageResponse
 
 # ── Tuning ───────────────────────────────────────────────────────────────────
-DEBUG               = False
+DEBUG               = True
 CROP_TOP_FRACTION   = 0.5
 
 MIN_CONTOUR_AREA    = 200

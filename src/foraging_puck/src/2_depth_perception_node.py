@@ -19,7 +19,7 @@ import cv2
 from sensor_msgs.msg import CompressedImage
 from foraging_msgs.msg import RawPuckDetected, PuckDetected
 
-DEBUG = False
+DEBUG = True
 CROP_TOP_FRACTION    = 0.5   # Must match perception_node.py
 CIRCLE_MASK_SCALE    = 0.8   # Sample inner 80% of detected circle to avoid edge pixels
 DEPTH_CLUSTER_TOL_MM  = 150  # Readings within 150mm are considered the same surface

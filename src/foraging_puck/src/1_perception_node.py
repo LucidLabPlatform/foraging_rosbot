@@ -17,7 +17,7 @@ from foraging_msgs.msg import RawPuckDetected
 bridge = CvBridge()
 
 # HSV bounds (tune with `python3 0_calibrate_HSV.py`)
-DEBUG_VISUALS = False
+DEBUG_VISUALS = True
 CROP_TOP_FRACTION = 0.5     # Discard this fraction from the top of the image
 MIN_CONTOUR_AREA = 200      # Minimum area of contour to be considered a puck
 MAX_CONTOUR_AREA = 10000     # Maximum area of contour to be considered a puck
