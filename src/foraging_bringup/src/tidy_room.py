@@ -26,13 +26,13 @@ from move_base_client import MoveBaseClient
 # ---------------------------------------------------------------------------
 # Physical constants (unlikely to change between experiments)
 # ---------------------------------------------------------------------------
-APPROACH_DIST              = 0.35   # must exceed puck obstacle radius (0.10) + inflation (0.15)
+APPROACH_DIST              = 0.40   # must exceed puck obstacle radius (0.10) + inflation (0.15)
 PICK_DISTANCE              = 0.30
 PICK_SPEED                 = 0.1
 DROP_DISTANCE              = 0.25
 DROP_SPEED                 = 0.1
 NAVIGATE_TO_PUCK_TIMEOUT   = 30.0   # seconds
-NAVIGATE_TO_CORNER_TIMEOUT = 30.0
+NAVIGATE_TO_CORNER_TIMEOUT = 60.0
 CORNER_APPROACH_DIST       = 0.40   # clear of overlapping inflation at room corners; cmd_vel covers the rest
 NAVIGATE_TO_SITE_TIMEOUT   = 30.0   # timeout for site fidelity navigation
 
