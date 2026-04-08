@@ -25,14 +25,14 @@ from move_base_client import MoveBaseClient
 # ---------------------------------------------------------------------------
 # Physical constants (unlikely to change between experiments)
 # ---------------------------------------------------------------------------
-APPROACH_DIST              = 0.2    # meters offset from puck position for approach waypoint
-PICK_DISTANCE              = 0.20
+APPROACH_DIST              = 0.35   # must exceed puck obstacle radius (0.10) + inflation (0.15)
+PICK_DISTANCE              = 0.30
 PICK_SPEED                 = 0.1
-DROP_DISTANCE              = 0.20
+DROP_DISTANCE              = 0.25
 DROP_SPEED                 = 0.1
 NAVIGATE_TO_PUCK_TIMEOUT   = 30.0   # seconds
 NAVIGATE_TO_CORNER_TIMEOUT = 30.0
-CORNER_APPROACH_DIST       = 0.20
+CORNER_APPROACH_DIST       = 0.30   # must exceed inflation radius around walls
 NAVIGATE_TO_SITE_TIMEOUT   = 30.0   # timeout for site fidelity navigation
 
 
