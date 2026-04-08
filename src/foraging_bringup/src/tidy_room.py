@@ -33,7 +33,7 @@ DROP_DISTANCE              = 0.25
 DROP_SPEED                 = 0.1
 NAVIGATE_TO_PUCK_TIMEOUT   = 30.0   # seconds
 NAVIGATE_TO_CORNER_TIMEOUT = 30.0
-CORNER_APPROACH_DIST       = 0.30   # move_base navigates here, then cmd_vel covers the rest
+CORNER_APPROACH_DIST       = 0.40   # clear of overlapping inflation at room corners; cmd_vel covers the rest
 NAVIGATE_TO_SITE_TIMEOUT   = 30.0   # timeout for site fidelity navigation
 
 
