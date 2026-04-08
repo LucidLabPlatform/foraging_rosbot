@@ -6,6 +6,9 @@ global_costmap:
   update_frequency: 2.0
   publish_frequency: 1.0
 
+  # Allow up to 3 seconds for the map frame to appear (gmapping publishes every ~2s)
+  transform_tolerance: 3.0
+
   static_map: true
   rolling_window: false
 

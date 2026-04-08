@@ -1,0 +1,6 @@
+<launch>
+    <node name="pick_puck_server"   pkg="foraging_services" type="pick_puck_server.py"   output="screen"/>
+    <node name="drop_puck_server"   pkg="foraging_services" type="drop_puck_server.py"   output="screen"/>
+    <node name="center_puck_server" pkg="foraging_services" type="center_puck.py"        output="screen"/>
+    <node name="random_walk_server" pkg="foraging_services" type="random_walk.py"        output="screen"/>
+</launch>

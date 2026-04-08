@@ -19,27 +19,16 @@ import cv2
 from sensor_msgs.msg import CompressedImage
 from foraging_msgs.msg import RawPuckDetected, PuckDetected
 
-DEBUG = True
+DEBUG = False
 CROP_TOP_FRACTION    = 0.5   # Must match perception_node.py
-BOTTOM_STRIP_FRACTION = 0.3  # Sample bottom 30% of bbox height
+CIRCLE_MASK_SCALE    = 0.8   # Sample inner 80% of detected circle to avoid edge pixels
 DEPTH_CLUSTER_TOL_MM  = 150  # Readings within 150mm are considered the same surface
 MIN_CLUSTER_SAMPLES   = 5    # Minimum readings in dominant cluster to trust the depth
-BLACK_THRESHOLD       = 30   # Pixels with all channels below this are treated as background
+MIN_VALID_DEPTH_RATIO = 0.5  # Skip puck if fewer than 50% of circle pixels have valid depth
 
 pending_pucks = []
 publisher_puck = None
-latest_color = None   # latest cropped color image (BGR, uint8)
 COLOR_BGR = {1: (0, 0, 255), 2: (0, 255, 0), 3: (255, 0, 0)}
-
-
-def callback_color(msg: CompressedImage):
-    global latest_color
-    buf = np.frombuffer(msg.data, dtype=np.uint8)
-    img = cv2.imdecode(buf, cv2.IMREAD_COLOR)
-    if img is None:
-        return
-    crop_y = int(img.shape[0] * CROP_TOP_FRACTION)
-    latest_color = img[crop_y:, :]
 
 
 def callback_raw_puck(msg: RawPuckDetected):
@@ -75,29 +64,32 @@ def callback_depth(msg: CompressedImage):
         display = cv2.applyColorMap(display, cv2.COLORMAP_JET)
 
     for puck in to_process:
-        # Bounding box is in full-image space — remap y into cropped space
-        bbox_x = int(np.clip(puck.bbox_x, 0, w - 1))
-        bbox_w = int(np.clip(puck.bbox_w, 1, w - bbox_x))
-        bbox_bottom_full = int(puck.bbox_y) + int(puck.bbox_h)
+        # Convert center from full-image space to cropped-image space
+        cx = int(np.clip(puck.center_x, 0, w - 1))
+        cy_full = int(puck.center_y)
+        cy_cropped = cy_full - crop_y
 
-        if bbox_bottom_full < crop_y:
-            rospy.logwarn_throttle(2, f"Puck bbox is above crop line — skipping")
+        if cy_cropped < 0 or cy_cropped >= cropped_h:
+            rospy.logwarn_throttle(2, "Puck center is above crop line — skipping")
             continue
 
-        bbox_bottom = int(np.clip(bbox_bottom_full - crop_y, 0, cropped_h))
-        strip_top   = max(0, bbox_bottom - int(puck.bbox_h * BOTTOM_STRIP_FRACTION))
+        radius = int(puck.radius * CIRCLE_MASK_SCALE)
+        if radius < 1:
+            rospy.logwarn_throttle(2, "Puck radius too small — skipping")
+            continue
 
-        # Sample bottom strip of the bounding box
-        strip = depth_cropped[strip_top:bbox_bottom, bbox_x:bbox_x + bbox_w]
+        # Build circular mask and sample only pixels inside the puck shape
+        mask = np.zeros((cropped_h, w), dtype=np.uint8)
+        cv2.circle(mask, (cx, cy_cropped), radius, 255, -1)
 
-        # Exclude pixels whose color is black — they are background leaking into the bbox,
-        # and their depth would be from the wall behind the puck rather than the puck itself
-        if latest_color is not None:
-            color_strip = latest_color[strip_top:bbox_bottom, bbox_x:bbox_x + bbox_w]
-            not_black = np.any(color_strip > BLACK_THRESHOLD, axis=2)
-            valid = strip[not_black & (strip > 0)].flatten()
-        else:
-            valid = strip[strip > 0].flatten()
+        masked_depth = depth_cropped.copy()
+        masked_depth[mask == 0] = 0
+        valid = masked_depth[masked_depth > 0].flatten()
+
+        total_mask_pixels = np.count_nonzero(mask)
+        if len(valid) < total_mask_pixels * MIN_VALID_DEPTH_RATIO:
+            rospy.logdebug(f"Too many invalid depth pixels ({len(valid)}/{total_mask_pixels}) — skipping")
+            continue
 
         # Find the largest cluster of similar depths
         valid_sorted = np.sort(valid)
@@ -117,11 +109,8 @@ def callback_depth(msg: CompressedImage):
         distance_mm = float(np.mean(best_cluster))
 
         if not (100 < distance_mm < 2000):
-            rospy.logwarn_throttle(2, f"Depth out of range {distance_mm:.0f}mm — skipping")
+            rospy.logdebug(f"Depth out of range {distance_mm:.0f}mm — skipping")
             continue
-
-        cx = int(np.clip(puck.center_x, 0, w - 1))
-        cy_full = int(puck.center_y)
 
         distance_m = distance_mm / 1000.0
         rospy.loginfo(f"Puck color={puck.color} at ({cx},{cy_full}) → {distance_m:.3f}m")
@@ -135,9 +124,9 @@ def callback_depth(msg: CompressedImage):
         publisher_puck.publish(out)
 
         if DEBUG:
-            cy_cropped = int(np.clip(cy_full - crop_y, 0, cropped_h - 1))
             color_bgr = COLOR_BGR.get(puck.color, (255, 255, 255))
-            cv2.circle(display, (cx, cy_cropped), 6, color_bgr, -1)
+            cv2.circle(display, (cx, cy_cropped), radius, color_bgr, 1)  # sampling circle outline
+            cv2.circle(display, (cx, cy_cropped), 6, color_bgr, -1)      # center dot
             cv2.putText(display, f"{distance_m:.2f}m", (cx + 8, cy_cropped - 6),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.5, color_bgr, 2)
 
@@ -151,7 +140,6 @@ def main():
     rospy.init_node("puck_depth_node")
     publisher_puck = rospy.Publisher('/puck/detected', PuckDetected, queue_size=10)
     rospy.Subscriber("/camera/depth/image_2fps/compressedDepth", CompressedImage, callback_depth, queue_size=1)
-    rospy.Subscriber("/camera/color/image_2fps/compressed", CompressedImage, callback_color, queue_size=1)
     rospy.Subscriber("/puck/detected/raw", RawPuckDetected, callback_raw_puck, queue_size=10)
     rospy.spin()
     cv2.destroyAllWindows()

@@ -1,0 +1,16 @@
+<launch>
+    <arg name="debug" default="true"/>
+
+    <!-- Costmap2DROS blocks internally until TF map->base_link is available -->
+    <node pkg="move_base" type="move_base" respawn="false" name="move_base" output="screen">
+        <env name="ROSCONSOLE_CONFIG_FILE" value="$(find foraging_bringup)/config/rosconsole_debug.config"
+             if="$(arg debug)"/>
+        <rosparam file="$(find foraging_bringup)/config/move_base.yaml"       command="load"/>
+        <rosparam file="$(find foraging_bringup)/config/costmap_common.yaml"  command="load" ns="global_costmap"/>
+        <rosparam file="$(find foraging_bringup)/config/costmap_common.yaml"  command="load" ns="local_costmap"/>
+        <rosparam file="$(find foraging_bringup)/config/costmap_global.yaml"  command="load"/>
+        <rosparam file="$(find foraging_bringup)/config/costmap_local.yaml"   command="load"/>
+        <rosparam file="$(find foraging_bringup)/config/planner_global.yaml"  command="load"/>
+        <rosparam file="$(find foraging_bringup)/config/planner_local.yaml"   command="load"/>
+    </node>
+</launch>

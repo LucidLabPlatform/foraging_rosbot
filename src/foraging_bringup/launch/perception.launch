@@ -1,0 +1,14 @@
+<launch>
+    <!-- ===== Puck detection pipeline ===== -->
+    <node pkg="foraging_puck" type="1_perception_node.py"          name="perception_node"          output="screen"/>
+    <node pkg="foraging_puck" type="2_depth_perception_node.py"    name="puck_depth_node"          output="screen"/>
+    <node pkg="foraging_puck" type="3_puck_global_pos.py"          name="puck_localization_node"    output="screen"/>
+    <node pkg="foraging_puck" type="4_pub_puck_tf.py"              name="puck_tf_broadcaster_node"  output="screen"/>
+    <node pkg="foraging_puck" type="5_puck_obstacle_publisher.py"  name="puck_obstacle_publisher"   output="screen"/>
+
+    <!-- ===== ArUco corner detection pipeline ===== -->
+    <node pkg="foraging_aruco" type="1_aruco_perception_node.py"   name="aruco_perception_node"     output="screen"/>
+    <node pkg="foraging_aruco" type="2_aruco_depth_node.py"        name="aruco_depth_node"          output="screen"/>
+    <node pkg="foraging_aruco" type="3_aruco_global_pos.py"        name="aruco_localization_node"   output="screen"/>
+    <node pkg="foraging_aruco" type="4_pub_aruco_tf.py"            name="aruco_tf_broadcaster_node" output="screen"/>
+</launch>
