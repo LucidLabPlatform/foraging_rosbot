@@ -114,7 +114,7 @@ def callback_color(msg: CompressedImage):
             if DEBUG_VISUALS:
                 cv2.drawContours(img, [contour], -1, (255, 0, 0), 2)
                 cv2.circle(img, (cx, cy), 2, (0, 255, 0), -1)
-                cv2.putText(img, color_name, (cx, max(0, cy - int(radius) - 6)),
+                cv2.putText(img, color_name, (cx, max(0, cy - 20)),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 255), 1)
 
     if DEBUG_VISUALS:
