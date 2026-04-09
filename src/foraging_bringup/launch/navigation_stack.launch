@@ -4,6 +4,12 @@
     <arg name="puck_cluster_r"     default="0.3"/>
     <arg name="puck_stale_timeout" default="5.0"/>
 
+    <!-- ===== Robot description (URDF with gripper) — must be first so TF is available before other nodes start ===== -->
+    <param name="robot_description"
+           command="$(find xacro)/xacro '$(find rosbot_description)/urdf/rosbot.xacro'"/>
+    <node name="joint_state_publisher" pkg="joint_state_publisher" type="joint_state_publisher"/>
+    <node name="robot_state_publisher" pkg="robot_state_publisher" type="robot_state_publisher"/>
+
     <!-- ===== SLAM ===== -->
     <include file="$(find foraging_bringup)/launch/gmapping.launch"/>
 
@@ -19,12 +25,6 @@
 
     <!-- ===== Foraging service servers ===== -->
     <include file="$(find foraging_bringup)/launch/services.launch"/>
-
-    <!-- ===== Robot description (URDF with gripper) ===== -->
-    <param name="robot_description"
-           command="$(find xacro)/xacro '$(find rosbot_description)/urdf/rosbot.xacro'"/>
-    <node name="joint_state_publisher" pkg="joint_state_publisher" type="joint_state_publisher"/>
-    <node name="robot_state_publisher" pkg="robot_state_publisher" type="robot_state_publisher"/>
 
     <!-- ===== Visualization ===== -->
     <group if="$(arg open_rviz)">
