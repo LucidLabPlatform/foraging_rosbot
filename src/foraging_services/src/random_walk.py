@@ -24,7 +24,7 @@ from move_base_client import MoveBaseClient
 # ── Parameters ────────────────────────────────────────────────────────────────
 STEP_SIZE_DEFAULT     = 0.5   # meters per step (overridable via ~step_size param)
 STEP_TIMEOUT          = 30    # seconds — timeout for each move_base goal
-MAX_ORIENTATION_TRIES = 3     # max attempts to find a free direction per step
+MAX_ORIENTATION_TRIES = 6     # max attempts to find a free direction per step
 ANGULAR_SPEED         = 0.6   # rad/s for in-place rotation
 YAW_TOLERANCE         = 0.1   # rad — acceptable error when rotating to target yaw
 ROTATE_TIMEOUT        = 10.0   # seconds — max time to complete an in-place rotation
@@ -254,9 +254,37 @@ class RandomWalkServer:
                     )
 
             if not direction_found:
-                rospy.logwarn(
-                    f"No valid direction found after {MAX_ORIENTATION_TRIES} tries — waiting 1 s."
-                )
+                # Fallback: try a shorter step (half size) with a fresh set of directions
+                short_step = self._step_size * 0.5
+                sector_size = 2 * math.pi / MAX_ORIENTATION_TRIES
+                sector_offset = random.uniform(0, sector_size)
+                for attempt in range(MAX_ORIENTATION_TRIES):
+                    if rospy.is_shutdown():
+                        break
+                    with self._count_lock:
+                        if self._puck_count >= num_pucks and self._corner_count >= num_corners:
+                            return RandomWalkServerMessageResponse(done=True)
+                    world_angle = robot_yaw + sector_offset + attempt * sector_size
+                    goal_x = robot_x + short_step * math.cos(world_angle)
+                    goal_y = robot_y + short_step * math.sin(world_angle)
+                    if not self._is_goal_reachable(goal_x, goal_y):
+                        continue
+                    if not self._rotate_to_yaw(world_angle):
+                        continue
+                    pose = self._nav.get_robot_pose()
+                    if pose is not None:
+                        robot_x, robot_y, _ = pose
+                        goal_x = robot_x + short_step * math.cos(world_angle)
+                        goal_y = robot_y + short_step * math.sin(world_angle)
+                    success = self._nav.go_to(goal_x, goal_y, yaw=world_angle, timeout=STEP_TIMEOUT)
+                    if success:
+                        direction_found = True
+                        self._last_heading = world_angle
+                        rospy.sleep(PAUSE_AFTER_STEP)
+                        break
+
+            if not direction_found:
+                rospy.logwarn("No valid direction found (full + short step) — waiting 1 s.")
                 rospy.sleep(1.0)
 
         # Shutdown before thresholds met

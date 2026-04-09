@@ -3,7 +3,7 @@
   <arg name="trial_duration"     default="1200"/>
   <arg name="site_fidelity_rate" default="0.5"/>
   <arg name="walk_sigma"         default="0.5"/>
-  <arg name="step_size"          default="1.5"/>
+  <arg name="step_size"          default="0.75"/>
   <arg name="explore_puck_pct"   default="0.5"/>
   <arg name="explore_corner_pct" default="0.67"/>
   <arg name="num_pucks"          default="6"/>
