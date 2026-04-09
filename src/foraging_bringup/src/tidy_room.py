@@ -31,11 +31,11 @@ PICK_DISTANCE              = 0.40
 PICK_SPEED                 = 0.1
 DROP_DISTANCE              = 0.25
 DROP_SPEED                 = 0.1
-NAVIGATE_TO_PUCK_TIMEOUT   = 30.0   # seconds
+NAVIGATE_TO_PUCK_TIMEOUT   = 60.0   # seconds
 NAVIGATE_TO_CORNER_TIMEOUT = 60.0
 CORNER_APPROACH_DIST       = 0.40   # navigation stop point — kept away from wall inflation zone
 DROP_FORWARD_DIST          = 0.20   # how far drop_puck drives forward to deposit at corner
-NAVIGATE_TO_SITE_TIMEOUT   = 30.0   # timeout for site fidelity navigation
+NAVIGATE_TO_SITE_TIMEOUT   = 60.0   # timeout for site fidelity navigation
 
 
 # ---------------------------------------------------------------------------

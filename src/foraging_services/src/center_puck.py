@@ -38,7 +38,7 @@ MAX_ANGULAR_Z       = 0.8
 
 ALIGN_TOLERANCE_PX  = 20    # within this many px = aligned
 ALIGN_STABLE_FRAMES = 5     # consecutive aligned frames to declare success
-SERVICE_TIMEOUT_S   = 25.0
+SERVICE_TIMEOUT_S   = 40.0
 
 SEARCH_ANGULAR_SPEED         = 0.5           # rad/s for the search sweep
 SEARCH_ANGLE_RAD             = 0.5 # around 30 degrees

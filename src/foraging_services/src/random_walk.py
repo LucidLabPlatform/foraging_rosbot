@@ -23,11 +23,11 @@ from move_base_client import MoveBaseClient
 
 # ── Parameters ────────────────────────────────────────────────────────────────
 STEP_SIZE_DEFAULT     = 0.5   # meters per step (overridable via ~step_size param)
-STEP_TIMEOUT          = 20    # seconds — timeout for each move_base goal
+STEP_TIMEOUT          = 30    # seconds — timeout for each move_base goal
 MAX_ORIENTATION_TRIES = 3     # max attempts to find a free direction per step
 ANGULAR_SPEED         = 0.6   # rad/s for in-place rotation
 YAW_TOLERANCE         = 0.1   # rad — acceptable error when rotating to target yaw
-ROTATE_TIMEOUT        = 8.0   # seconds — max time to complete an in-place rotation
+ROTATE_TIMEOUT        = 10.0   # seconds — max time to complete an in-place rotation
 PAUSE_AFTER_STEP      = 5.0   # seconds to pause after each step to allow puck detection
 
 
