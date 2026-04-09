@@ -149,15 +149,19 @@ class TidyRoom:
                     mode = self._mode2_exploit()
                     break  # if mode2 returns, we're done
 
-            elapsed = round(time.time() - self._start_time, 1)
-            with self._registry_lock:
-                placed = sum(1 for p in self._puck_registry if p.status == 1)
-            self._publish_status("completed", pucks_placed=placed, duration_s=elapsed,
-                                 timed_out=timed_out)
-            self._publish_results(timed_out)
+        except (rospy.ROSInterruptException, rospy.ServiceException):
+            rospy.loginfo("Shutdown requested — stopping trial")
         except Exception as e:
             self._publish_status("error", error=str(e))
             raise
+        finally:
+            if self._start_time is not None:
+                elapsed = round(time.time() - self._start_time, 1)
+                with self._registry_lock:
+                    placed = sum(1 for p in self._puck_registry if p.status == 1)
+                self._publish_status("completed", pucks_placed=placed, duration_s=elapsed,
+                                     timed_out=timed_out)
+                self._publish_results(timed_out)
 
     # -----------------------------------------------------------------------
     # Mode 0 — pure exploration

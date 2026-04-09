@@ -54,12 +54,15 @@ class MoveBaseClient:
         self._result_event = threading.Event()
         self._result_status = None
         self._server_up = threading.Event()
+        self._shutting_down = False
 
         # Subscribers
         rospy.Subscriber(
             "/move_base/status", GoalStatusArray, self._status_cb)
         rospy.Subscriber(
             "/move_base/result", MoveBaseActionResult, self._result_cb)
+
+        rospy.on_shutdown(self._on_shutdown)
 
     def _status_cb(self, msg):
         """Any status message means the action server is alive."""
@@ -72,6 +75,12 @@ class MoveBaseClient:
                 msg.status.goal_id.id == self._current_goal_id):
             self._result_status = msg.status.status
             self._result_event.set()
+
+    def _on_shutdown(self):
+        self._shutting_down = True
+        self.cancel()
+        self._result_event.set()
+        self._server_up.set()
 
     def wait_until_ready(self, tf_timeout=90.0, server_timeout=90.0):
         """Block until TF map->base_link and move_base status topic are up.
@@ -96,7 +105,12 @@ class MoveBaseClient:
         # Phase 2: wait for move_base /status topic (proves server is alive)
         rospy.loginfo("[nav] Waiting for move_base status (%.0fs timeout) ...",
                       server_timeout)
-        if self._server_up.wait(server_timeout):
+        deadline = time.time() + server_timeout
+        while not self._server_up.is_set() and time.time() < deadline:
+            if self._shutting_down:
+                return False
+            self._server_up.wait(1.0)
+        if self._server_up.is_set() and not self._shutting_down:
             rospy.loginfo("[nav] move_base is up.")
             return True
 
@@ -128,7 +142,15 @@ class MoveBaseClient:
         rospy.loginfo("[nav] Goal %s sent: (%.2f, %.2f, yaw=%.2f)",
                       goal_id, x, y, yaw)
 
-        if self._result_event.wait(timeout):
+        # Poll so we can exit promptly on shutdown
+        deadline = time.time() + timeout
+        while not self._result_event.is_set() and time.time() < deadline:
+            if self._shutting_down:
+                self.cancel()
+                return False
+            self._result_event.wait(0.5)
+
+        if self._result_event.is_set() and not self._shutting_down:
             elapsed = time.time() - t_start
             if self._result_status == GoalStatus.SUCCEEDED:
                 rospy.loginfo("[nav] Goal %s succeeded in %.1fs.", goal_id, elapsed)
