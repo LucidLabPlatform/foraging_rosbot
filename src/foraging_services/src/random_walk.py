@@ -196,6 +196,10 @@ class RandomWalkServer:
 
             # Try to find a free direction: random angle → rotate → let move_base check path
             direction_found = False
+            # Spread attempts evenly across the circle with a random phase so successive
+            # failed steps don't keep retrying the same directions
+            sector_size = 2 * math.pi / MAX_ORIENTATION_TRIES
+            sector_offset = random.uniform(0, sector_size)
             for attempt in range(MAX_ORIENTATION_TRIES):
                 # Early exit if thresholds met during step
                 with self._count_lock:
@@ -210,7 +214,7 @@ class RandomWalkServer:
                     delta = random.gauss(0, self._walk_sigma)
                     world_angle = self._last_heading + delta
                 else:
-                    world_angle = random.uniform(-math.pi, math.pi) + robot_yaw
+                    world_angle = robot_yaw + sector_offset + attempt * sector_size
                 goal_x = robot_x + self._step_size * math.cos(world_angle)
                 goal_y = robot_y + self._step_size * math.sin(world_angle)
 
