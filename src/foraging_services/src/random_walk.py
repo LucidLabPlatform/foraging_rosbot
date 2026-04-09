@@ -17,7 +17,8 @@ import random
 import threading
 from foraging_msgs.msg import PuckRegistry, ArucoRegistry
 from foraging_msgs.srv import RandomWalkServerMessage, RandomWalkServerMessageResponse
-from geometry_msgs.msg import Twist
+from geometry_msgs.msg import PoseStamped, Twist
+from nav_msgs.srv import GetPlan, GetPlanRequest
 from move_base_client import MoveBaseClient
 
 # ── Parameters ────────────────────────────────────────────────────────────────
@@ -56,6 +57,10 @@ class RandomWalkServer:
             rospy.logfatal("move_base not available — random walk cannot start")
             rospy.signal_shutdown("move_base not available")
             return
+
+        # make_plan pre-check
+        rospy.wait_for_service('/move_base/make_plan')
+        self._make_plan = rospy.ServiceProxy('/move_base/make_plan', GetPlan)
 
         # Service server
         self._service = rospy.Service("random_walk", RandomWalkServerMessage, self.handle_random_walk)
@@ -107,6 +112,42 @@ class RandomWalkServer:
         twist.angular.z = 0.0
         self._cmd_vel.publish(twist)
         return False
+
+    def _is_goal_reachable(self, goal_x, goal_y):
+        """Pre-check goal reachability via make_plan before rotating toward it."""
+        try:
+            pose = self._nav.get_robot_pose()
+            if pose is None:
+                return True  # can't check, assume reachable
+
+            start = PoseStamped()
+            start.header.frame_id = "map"
+            start.header.stamp = rospy.Time.now()
+            start.pose.position.x = pose[0]
+            start.pose.position.y = pose[1]
+            start.pose.orientation.w = 1.0
+
+            goal = PoseStamped()
+            goal.header.frame_id = "map"
+            goal.header.stamp = rospy.Time.now()
+            goal.pose.position.x = goal_x
+            goal.pose.position.y = goal_y
+            goal.pose.orientation.w = 1.0
+
+            req = GetPlanRequest()
+            req.start = start
+            req.goal = goal
+            req.tolerance = 0.25  # matches xy_goal_tolerance
+
+            resp = self._make_plan(req)
+            reachable = len(resp.plan.poses) > 0
+            if not reachable:
+                rospy.logdebug("[walk] make_plan: goal (%.2f, %.2f) unreachable — skipping",
+                               goal_x, goal_y)
+            return reachable
+        except rospy.ServiceException as e:
+            rospy.logwarn("[walk] make_plan service error: %s — assuming reachable", e)
+            return True  # fail open so walk doesn't stall
 
     # ── Service handler ───────────────────────────────────────────────────────
 
@@ -172,6 +213,10 @@ class RandomWalkServer:
                     world_angle = random.uniform(-math.pi, math.pi) + robot_yaw
                 goal_x = robot_x + self._step_size * math.cos(world_angle)
                 goal_y = robot_y + self._step_size * math.sin(world_angle)
+
+                # Pre-check goal reachability before rotating toward it
+                if not self._is_goal_reachable(goal_x, goal_y):
+                    continue
 
                 # Rotate robot to face this direction
                 if not self._rotate_to_yaw(world_angle):
