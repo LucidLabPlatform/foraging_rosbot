@@ -33,7 +33,8 @@ DROP_DISTANCE              = 0.25
 DROP_SPEED                 = 0.1
 NAVIGATE_TO_PUCK_TIMEOUT   = 30.0   # seconds
 NAVIGATE_TO_CORNER_TIMEOUT = 60.0
-CORNER_APPROACH_DIST       = 0.40   # clear of overlapping inflation at room corners; cmd_vel covers the rest
+CORNER_APPROACH_DIST       = 0.40   # navigation stop point — kept away from wall inflation zone
+DROP_FORWARD_DIST          = 0.20   # how far drop_puck drives forward to deposit at corner
 NAVIGATE_TO_SITE_TIMEOUT   = 30.0   # timeout for site fidelity navigation
 
 
@@ -365,7 +366,7 @@ class TidyRoom:
                           puck.id, goal_x, goal_y, CORNER_APPROACH_DIST)
             # Puck is already picked — still drop it so gripper is free
             try:
-                self._drop_puck(DROP_DISTANCE, DROP_SPEED, 0.0)
+                self._drop_puck(DROP_DISTANCE, DROP_SPEED, DROP_FORWARD_DIST)
             except rospy.ServiceException:
                 pass
             # Revert puck status since delivery failed
@@ -377,7 +378,7 @@ class TidyRoom:
 
         # Step 5: Drop puck
         try:
-            resp = self._drop_puck(DROP_DISTANCE, DROP_SPEED, CORNER_APPROACH_DIST)
+            resp = self._drop_puck(DROP_DISTANCE, DROP_SPEED, DROP_FORWARD_DIST)
             if not resp.success:
                 rospy.logwarn("drop_puck service call returned failure for puck %d", puck.id)
                 return False
