@@ -7,7 +7,7 @@ from foraging_msgs.msg import PuckRegistry
 from sensor_msgs.msg import PointCloud2, PointField
 from std_msgs.msg import Header
 
-PUCK_RADIUS   = 0.10   # bigger than actual puck to create hard safety margin
+PUCK_RADIUS   = 0.08  # based on base of puck radius
 POINT_SPACING = 0.01
 POINT_Z       = 0.0   # must be above min_obstacle_height
 

@@ -18,8 +18,8 @@ TrajectoryPlannerROS:
     yaw_goal_tolerance: 0.5
 
     meter_scoring: true
-    path_distance_bias: 20
-    goal_distance_bias: 15
+    path_distance_bias: 8
+    goal_distance_bias: 20
     occdist_scale:  0.01
 
-    sim_time: 2.0
+    sim_time: 1.0
