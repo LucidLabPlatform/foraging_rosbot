@@ -1,0 +1,38 @@
+{
+  "permissions": {
+    "allow": [
+      "WebSearch",
+      "Bash(curl -s \"https://scholar.google.com/scholar?q=%22single+robot%22+foraging+bounded+arena+exploration+exploitation&as_ylo=2015&as_yhi=2026\" -H \"User-Agent: Mozilla/5.0 \\(Macintosh; Intel Mac OS X 10_15_7\\) AppleWebKit/537.36\")",
+      "Bash(curl:*)",
+      "WebFetch(domain:www.researchgate.net)",
+      "WebFetch(domain:journals.sagepub.com)",
+      "WebFetch(domain:www.frontiersin.org)",
+      "WebFetch(domain:arxiv.org)",
+      "WebFetch(domain:fricke.co.uk)",
+      "WebFetch(domain:people.csail.mit.edu)",
+      "WebFetch(domain:www-users.cse.umn.edu)",
+      "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\(d.get\\(''''Abstract'''',''''''''\\)[:500]\\); [print\\(r.get\\(''''Text'''',''''''''\\)[:200]\\) for r in d.get\\(''''RelatedTopics'''',[]\\)]\")",
+      "Bash(python3 -m json.tool)",
+      "WebFetch(domain:ieeexplore.ieee.org)",
+      "WebFetch(domain:journals.aps.org)",
+      "WebFetch(domain:indiaai.gov.in)",
+      "WebFetch(domain:www.newkerala.com)",
+      "WebFetch(domain:indiaeducationdiary.in)",
+      "WebFetch(domain:pmc.ncbi.nlm.nih.gov)",
+      "Bash(cat:*)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:answers.ros.org)",
+      "WebFetch(domain:wiki.ros.org)",
+      "WebFetch(domain:husarion.com)",
+      "WebFetch(domain:robotics.stackexchange.com)",
+      "WebFetch(domain:docs.ros.org)",
+      "WebFetch(domain:community.husarion.com)",
+      "WebFetch(domain:get-help.theconstruct.ai)",
+      "WebFetch(domain:mirror.umd.edu)",
+      "WebFetch(domain:kaiyuzheng.me)",
+      "WebFetch(domain:emanual.robotis.com)",
+      "WebFetch(domain:ar5iv.labs.arxiv.org)",
+      "Bash(shasum -a 256 /Users/farahorfaly/Desktop/LUCID/components/lucid-component-viz/dist/lucid_component_viz-0.3.0-py3-none-any.whl)"
+    ]
+  }
+}
