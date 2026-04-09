@@ -115,6 +115,8 @@ class RandomWalkServer:
 
     def _is_goal_reachable(self, goal_x, goal_y):
         """Pre-check goal reachability via make_plan before rotating toward it."""
+        self._nav.cancel()
+        rospy.sleep(0.5)
         try:
             pose = self._nav.get_robot_pose()
             if pose is None:
