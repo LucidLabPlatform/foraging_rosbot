@@ -22,4 +22,4 @@ TrajectoryPlannerROS:
     goal_distance_bias: 20
     occdist_scale:  0.01
 
-    sim_time: 3.0
+    sim_time: 2.0
