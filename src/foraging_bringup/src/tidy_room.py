@@ -50,7 +50,6 @@ class TidyRoom:
         self.explore_puck_pct    = rospy.get_param('~explore_puck_pct', 0.5)
         self.explore_corner_pct  = rospy.get_param('~explore_corner_pct', 0.67)
         self._site_fidelity_rate = rospy.get_param('~site_fidelity_rate', 0.5)
-        self._trial_duration     = rospy.get_param('~trial_duration', 1200)  # seconds (20 min)
         self._puck_selection     = rospy.get_param('~puck_selection', 'closest')
 
         self._start_time = None
@@ -94,13 +93,7 @@ class TidyRoom:
         msg.update(extra)
         self._status_pub.publish(json.dumps(msg))
 
-    def _trial_timed_out(self):
-        """Check if the trial duration has been exceeded."""
-        if self._start_time is None or self._trial_duration <= 0:
-            return False
-        return (time.time() - self._start_time) >= self._trial_duration
-
-    def _publish_results(self, timed_out):
+    def _publish_results(self):
         """Publish structured trial results to /foraging/results."""
         elapsed = round(time.time() - self._start_time, 1)
         with self._registry_lock:
@@ -108,35 +101,25 @@ class TidyRoom:
         results = {
             "pucks_placed": placed,
             "duration_s": elapsed,
-            "timed_out": timed_out,
             "params": {
                 "site_fidelity_rate": self._site_fidelity_rate,
                 "explore_puck_pct": self.explore_puck_pct,
                 "explore_corner_pct": self.explore_corner_pct,
                 "puck_selection": self._puck_selection,
                 "num_pucks_expected": self.num_pucks_expected,
-                "trial_duration": self._trial_duration,
             },
             "puck_events": self._puck_events,
         }
         self._results_pub.publish(json.dumps(results))
-        rospy.loginfo("Trial results: %d pucks placed in %.1fs (timed_out=%s)",
-                      placed, elapsed, timed_out)
+        rospy.loginfo("Trial results: %d pucks placed in %.1fs", placed, elapsed)
 
     def run(self):
         self._start_time = time.time()
         mode = 0
-        timed_out = False
         self._publish_status("running", mode=0)
-        rospy.loginfo("TidyRoom starting in Mode 0 (explore) — trial duration: %ds",
-                      self._trial_duration)
+        rospy.loginfo("TidyRoom starting in Mode 0 (explore)")
         try:
             while not rospy.is_shutdown():
-                if self._trial_timed_out():
-                    rospy.loginfo("Trial duration reached (%ds). Stopping.", self._trial_duration)
-                    timed_out = True
-                    break
-
                 if mode == 0:
                     mode = self._mode0_explore()
                     if mode != 0:
@@ -159,9 +142,8 @@ class TidyRoom:
                 elapsed = round(time.time() - self._start_time, 1)
                 with self._registry_lock:
                     placed = sum(1 for p in self._puck_registry if p.status == 1)
-                self._publish_status("completed", pucks_placed=placed, duration_s=elapsed,
-                                     timed_out=timed_out)
-                self._publish_results(timed_out)
+                self._publish_status("completed", pucks_placed=placed, duration_s=elapsed)
+                self._publish_results()
 
     # -----------------------------------------------------------------------
     # Mode 0 — pure exploration
@@ -235,9 +217,6 @@ class TidyRoom:
     def _mode2_exploit(self):
         rospy.loginfo("Mode 2: pure exploitation")
         while not rospy.is_shutdown():
-            if self._trial_timed_out():
-                return 3
-
             with self._registry_lock:
                 puck_registry = list(self._puck_registry)
                 aruco_registry = list(self._aruco_registry)

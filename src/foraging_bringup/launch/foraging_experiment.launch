@@ -1,6 +1,5 @@
 <launch>
   <!-- ===== Sweepable experiment parameters ===== -->
-  <arg name="trial_duration"     default="1200"/>
   <arg name="site_fidelity_rate" default="0.5"/>
   <arg name="walk_sigma"         default="0.5"/>
   <arg name="step_size"          default="0.75"/>
@@ -32,7 +31,6 @@
 
   <!-- ===== Foraging orchestrator ===== -->
   <node name="tidy_room" pkg="foraging_bringup" type="tidy_room.py" output="screen">
-    <param name="trial_duration"      value="$(arg trial_duration)"/>
     <param name="site_fidelity_rate"  value="$(arg site_fidelity_rate)"/>
     <param name="explore_puck_pct"    value="$(arg explore_puck_pct)"/>
     <param name="explore_corner_pct"  value="$(arg explore_corner_pct)"/>
