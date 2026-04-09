@@ -7,7 +7,9 @@ bypasses it entirely: publish goals to /move_base/goal, subscribe to
 /move_base/result and /move_base/status — plain ROS topics that work.
 """
 
+import math
 import threading
+import time
 import uuid
 
 import rospy
@@ -15,6 +17,16 @@ import tf
 from actionlib_msgs.msg import GoalID, GoalStatus, GoalStatusArray
 from move_base_msgs.msg import MoveBaseActionGoal, MoveBaseActionResult, MoveBaseGoal
 from geometry_msgs.msg import Quaternion
+
+_STATUS_NAMES = {
+    GoalStatus.PENDING:   "PENDING",
+    GoalStatus.ACTIVE:    "ACTIVE",
+    GoalStatus.PREEMPTED: "PREEMPTED",
+    GoalStatus.SUCCEEDED: "SUCCEEDED",
+    GoalStatus.ABORTED:   "ABORTED",
+    GoalStatus.REJECTED:  "REJECTED",
+    GoalStatus.LOST:      "LOST",
+}
 
 
 class MoveBaseClient:
@@ -112,21 +124,49 @@ class MoveBaseClient:
         msg.goal.target_pose.pose.orientation = Quaternion(*q)
 
         self._goal_pub.publish(msg)
+        t_start = time.time()
         rospy.loginfo("[nav] Goal %s sent: (%.2f, %.2f, yaw=%.2f)",
                       goal_id, x, y, yaw)
 
         if self._result_event.wait(timeout):
+            elapsed = time.time() - t_start
             if self._result_status == GoalStatus.SUCCEEDED:
-                rospy.loginfo("[nav] Goal %s succeeded.", goal_id)
+                rospy.loginfo("[nav] Goal %s succeeded in %.1fs.", goal_id, elapsed)
                 return True
             else:
-                rospy.logwarn("[nav] Goal %s finished with status %d.",
-                             goal_id, self._result_status)
+                status_name = _STATUS_NAMES.get(self._result_status,
+                                                str(self._result_status))
+                pos = self.get_robot_position()
+                if pos:
+                    dist_remaining = math.sqrt((x - pos[0])**2 + (y - pos[1])**2)
+                    rospy.logwarn(
+                        "[nav] Goal %s FAILED — status=%s elapsed=%.1fs "
+                        "robot=(%.2f, %.2f) goal=(%.2f, %.2f) dist_remaining=%.2fm%s",
+                        goal_id, status_name, elapsed,
+                        pos[0], pos[1], x, y, dist_remaining,
+                        " (likely: no valid plan)" if elapsed < 2.0 else
+                        " (likely: controller could not execute plan)" if elapsed >= 9.0
+                        else "")
+                else:
+                    rospy.logwarn(
+                        "[nav] Goal %s FAILED — status=%s elapsed=%.1fs "
+                        "goal=(%.2f, %.2f) (robot position unavailable)",
+                        goal_id, status_name, elapsed, x, y)
                 return False
 
-        # Timed out — cancel the goal
+        # Our timeout expired — cancel the goal
+        elapsed = time.time() - t_start
         self.cancel()
-        rospy.logwarn("[nav] Goal %s timed out (%.0fs)", goal_id, timeout)
+        pos = self.get_robot_position()
+        if pos:
+            dist_remaining = math.sqrt((x - pos[0])**2 + (y - pos[1])**2)
+            rospy.logwarn(
+                "[nav] Goal %s TIMED OUT (%.0fs) — "
+                "robot=(%.2f, %.2f) goal=(%.2f, %.2f) dist_remaining=%.2fm",
+                goal_id, elapsed, pos[0], pos[1], x, y, dist_remaining)
+        else:
+            rospy.logwarn("[nav] Goal %s TIMED OUT (%.0fs) — goal=(%.2f, %.2f)",
+                          goal_id, elapsed, x, y)
         return False
 
     def cancel(self):
