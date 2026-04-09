@@ -27,7 +27,7 @@ from move_base_client import MoveBaseClient
 # Physical constants (unlikely to change between experiments)
 # ---------------------------------------------------------------------------
 APPROACH_DIST              = 0.40   # must exceed puck obstacle radius (0.10) + inflation (0.15)
-PICK_DISTANCE              = 0.30
+PICK_DISTANCE              = 0.40
 PICK_SPEED                 = 0.1
 DROP_DISTANCE              = 0.25
 DROP_SPEED                 = 0.1
@@ -61,6 +61,7 @@ class TidyRoom:
         self._puck_registry = []     # list of PuckConfirmed
         self._aruco_registry = []    # list of ArucoConfirmed
         self._skipped_pucks = set()  # puck IDs to skip (failed attempts)
+        self._placed_pucks  = set()  # puck IDs confirmed placed (local cache, avoids registry callback race)
 
         # CPFA state
         self._last_find_location = None  # (x, y) of last picked puck for site fidelity
@@ -239,7 +240,7 @@ class TidyRoom:
 
             puck = self._select_puck(puck_registry, aruco_registry)
             if puck is None:
-                rospy.loginfo("All pucks delivered. Done!")
+                rospy.loginfo("All pucks delivered (%d placed). Done!", len(self._placed_pucks))
                 return 3  # done
 
             corner = self._get_corner_for_puck(puck, aruco_registry)
@@ -272,6 +273,7 @@ class TidyRoom:
             p for p in puck_registry
             if p.status == 0
             and p.id not in self._skipped_pucks
+            and p.id not in self._placed_pucks
             and self._get_corner_for_puck(p, aruco_registry) is not None
         ]
         if not candidates:
@@ -396,6 +398,9 @@ class TidyRoom:
                 rospy.logwarn("update_puck_status failed: %s", resp.error_message)
         except rospy.ServiceException as e:
             rospy.logwarn("update_puck_status service error: %s", e)
+
+        # Mark as placed locally so _select_puck doesn't re-pick before registry callback fires
+        self._placed_pucks.add(puck.id)
 
         # Record per-puck event timestamps and update site fidelity location
         delivered_at_s = round(time.time() - self._start_time, 1)
