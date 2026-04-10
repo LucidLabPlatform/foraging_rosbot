@@ -49,7 +49,7 @@ HSV_BOUNDS = {
     "red":   [(np.array([  0, 105,   0]), np.array([ 15, 255, 255])),
               (np.array([165, 105,   0]), np.array([180, 255, 255]))],
     "green": [(np.array([ 35,  20,   0]), np.array([ 80, 255, 255]))],
-    "blue":  [(np.array([ 90, 160,   0]), np.array([130, 255, 255]))],
+    "blue":  [(np.array([ 90, 200,   0]), np.array([130, 255, 255]))],
 }
 KERNEL = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
 # ─────────────────────────────────────────────────────────────────────────────
