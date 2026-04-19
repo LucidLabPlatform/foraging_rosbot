@@ -19,7 +19,7 @@ import cv2
 from sensor_msgs.msg import CompressedImage
 from foraging_msgs.msg import RawPuckDetected, PuckDetected
 
-DEBUG = True
+DEBUG = False
 CROP_TOP_FRACTION    = 0.5   # Must match perception_node.py
 DEPTH_CLUSTER_TOL_MM  = 150  # Readings within 150mm are considered the same surface
 MIN_CLUSTER_SAMPLES   = 5    # Minimum readings in dominant cluster to trust the depth

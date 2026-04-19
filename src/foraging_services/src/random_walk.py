@@ -22,9 +22,9 @@ from nav_msgs.srv import GetPlan, GetPlanRequest
 from move_base_client import MoveBaseClient
 
 # ── Parameters ────────────────────────────────────────────────────────────────
-STEP_SIZE_DEFAULT     = 0.5   # meters per step (overridable via ~step_size param)
-STEP_TIMEOUT          = 30    # seconds — timeout for each move_base goal
-MAX_ORIENTATION_TRIES = 6     # max attempts to find a free direction per step
+STEP_SIZE_DEFAULT     = 0.5   # meters per step (overridable via ~step_size param)   # <-- Decrease for better random walk?
+STEP_TIMEOUT          = 30    # seconds — timeout for each move_base goal            # <-- Decrease for better random walk?
+MAX_ORIENTATION_TRIES = 6     # max attempts to find a free direction per step       # <-- Decrease for better random walk?
 ANGULAR_SPEED         = 0.6   # rad/s for in-place rotation
 YAW_TOLERANCE         = 0.1   # rad — acceptable error when rotating to target yaw
 ROTATE_TIMEOUT        = 10.0   # seconds — max time to complete an in-place rotation

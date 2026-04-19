@@ -45,7 +45,7 @@ NAVIGATE_TO_SITE_TIMEOUT   = 60.0   # timeout for site fidelity navigation
 class TidyRoom:
     def __init__(self):
         # Sweepable experiment parameters
-        self.num_pucks_expected  = rospy.get_param('~num_pucks_expected', 6)
+        self.num_pucks_expected  = rospy.get_param('~num_pucks_expected', 6)    # <-- try to update param when miss detected a puck
         self.num_corners_expected = rospy.get_param('~num_corners_expected', 3)
         self.explore_puck_pct    = rospy.get_param('~explore_puck_pct', 0.5)
         self.explore_corner_pct  = rospy.get_param('~explore_corner_pct', 0.67)

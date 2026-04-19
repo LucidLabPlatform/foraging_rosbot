@@ -10,7 +10,7 @@ from geometry_msgs.msg import Twist
 from foraging_msgs.srv import PickPuckServerMessage, PickPuckServerMessageResponse
 
 GRIPPER_OPEN = 0
-GRIPPER_CLOSE = 170
+GRIPPER_CLOSE = 160
 
 
 def move_forward(distance=0.1, speed=0.1):

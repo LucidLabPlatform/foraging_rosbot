@@ -11,7 +11,7 @@ from geometry_msgs.msg import Twist
 from foraging_msgs.srv import DropPuckServerMessage, DropPuckServerMessageResponse
 
 GRIPPER_OPEN  = 0
-GRIPPER_CLOSE = 170
+GRIPPER_CLOSE = 160
 TURN_SPEED    = 1.0   # rad/s for the 180° turn
 
 
