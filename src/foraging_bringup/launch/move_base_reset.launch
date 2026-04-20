@@ -1,0 +1,19 @@
+<launch>
+    <!-- move_base configured for reset-to-start mode:
+         - odom frame (no gmapping / no map frame)
+         - LIDAR-only obstacle avoidance
+         - tighter goal tolerances for precise positioning -->
+    <node pkg="move_base" type="move_base" respawn="false" name="move_base" output="screen">
+        <rosparam file="$(find foraging_bringup)/config/move_base.yaml"              command="load"/>
+        <rosparam file="$(find foraging_bringup)/config/costmap_common_reset.yaml"   command="load" ns="global_costmap"/>
+        <rosparam file="$(find foraging_bringup)/config/costmap_common_reset.yaml"   command="load" ns="local_costmap"/>
+        <rosparam file="$(find foraging_bringup)/config/costmap_global_reset.yaml"   command="load"/>
+        <rosparam file="$(find foraging_bringup)/config/costmap_local.yaml"          command="load"/>
+        <rosparam file="$(find foraging_bringup)/config/planner_global.yaml"         command="load"/>
+        <rosparam file="$(find foraging_bringup)/config/planner_local.yaml"          command="load"/>
+
+        <!-- Tighter tolerances than foraging defaults (0.15m / 0.5rad) -->
+        <param name="TrajectoryPlannerROS/xy_goal_tolerance"  value="0.05"/>
+        <param name="TrajectoryPlannerROS/yaw_goal_tolerance" value="0.10"/>
+    </node>
+</launch>

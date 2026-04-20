@@ -1,0 +1,31 @@
+<launch>
+    <!-- Start pose in OptiTrack frame (record these by placing the robot at
+         the desired start position and reading the OptiTrack values) -->
+    <arg name="start_x"        default="0.0"/>
+    <arg name="start_y"        default="0.0"/>
+    <arg name="start_yaw"      default="0.0"/>
+
+    <!-- Tolerances for declaring success -->
+    <arg name="pos_tolerance"   default="0.10"/>
+    <arg name="yaw_tolerance"   default="0.15"/>
+
+    <!-- Max correction iterations (recompute transform to cancel odom drift) -->
+    <arg name="max_corrections" default="3"/>
+
+    <!-- Navigation timeout per attempt (seconds) -->
+    <arg name="nav_timeout"     default="60.0"/>
+
+    <!-- move_base with odom-only costmaps (no gmapping needed) -->
+    <include file="$(find foraging_bringup)/launch/move_base_reset.launch"/>
+
+    <!-- Reset-to-start navigation node -->
+    <node name="reset_to_start" pkg="foraging_bringup" type="reset_to_start_node.py" output="screen">
+        <param name="start_x"         value="$(arg start_x)"/>
+        <param name="start_y"         value="$(arg start_y)"/>
+        <param name="start_yaw"       value="$(arg start_yaw)"/>
+        <param name="pos_tolerance"   value="$(arg pos_tolerance)"/>
+        <param name="yaw_tolerance"   value="$(arg yaw_tolerance)"/>
+        <param name="max_corrections" value="$(arg max_corrections)"/>
+        <param name="nav_timeout"     value="$(arg nav_timeout)"/>
+    </node>
+</launch>

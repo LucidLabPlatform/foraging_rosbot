@@ -1,0 +1,34 @@
+# Costmap config for reset-to-start mode.
+# No gmapping (odom frame), no static layer, LIDAR-only obstacle avoidance.
+global_frame: odom
+robot_base_frame: base_link
+
+footprint: [[0.13, 0.11], [0.13, -0.11], [-0.13, -0.11], [-0.13, 0.11]]
+footprint_padding: 0.03
+
+rolling_window: true
+track_unknown_space: true
+
+plugins:
+  - {name: obstacle_layer,  type: "costmap_2d::ObstacleLayer"}
+  - {name: inflation_layer, type: "costmap_2d::InflationLayer"}
+
+obstacle_layer:
+  enabled: true
+  track_unknown_space: true
+  combination_method: 1
+  observation_sources: scan
+
+  scan:
+    topic: /scan
+    data_type: LaserScan
+    marking: true
+    clearing: true
+    sensor_frame: laser
+    obstacle_range: 2.5
+    raytrace_range: 2.5
+
+inflation_layer:
+  enabled: true
+  cost_scaling_factor: 2.0
+  inflation_radius: 0.15
