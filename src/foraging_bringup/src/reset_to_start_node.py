@@ -13,6 +13,7 @@ Launched via:
 
 import json
 import math
+import sys
 import threading
 
 import rospy
@@ -39,6 +40,9 @@ class ResetToStart:
         self.max_angular_vel    = rospy.get_param("~max_angular_vel",    0.40)
         self.k_lin              = rospy.get_param("~k_lin",              0.3)
         self.k_ang              = rospy.get_param("~k_ang",              2.0)
+
+        # Interactive gating between phases (useful for step-by-step resets)
+        self.require_enter_between_phases = rospy.get_param("~require_enter_between_phases", True)
 
         self._ot_pose  = None
         self._ot_lock  = threading.Lock()
@@ -80,6 +84,27 @@ class ResetToStart:
 
     def _clamp(self, v, limit):
         return max(-limit, min(limit, v))
+
+    def _wait_for_enter(self, prompt):
+        """
+        Block until user presses Enter (interactive terminal).
+        Returns False if user aborts via Ctrl+C; returns True otherwise.
+        """
+        self._pub("waiting_for_enter", prompt=prompt)
+        rospy.loginfo("[reset] %s", prompt)
+
+        try:
+            if sys.stdin is None:
+                rospy.logwarn("[reset] stdin is not available; continuing without Enter.")
+                return True
+            input()
+            return True
+        except EOFError:
+            rospy.logwarn("[reset] stdin is closed (EOF); continuing without Enter.")
+            return True
+        except KeyboardInterrupt:
+            rospy.logwarn("[reset] user aborted while waiting for Enter.")
+            return False
 
     # ── Phase 1: rotate to face the goal ──────────────────────────────────
 
@@ -201,9 +226,19 @@ class ResetToStart:
             self._pub("failed", error="face_goal_failed")
             return
 
+        if self.require_enter_between_phases:
+            if not self._wait_for_enter("Phase 1 complete. Press Enter to start Phase 2 (drive to goal)."):
+                self._pub("failed", error="user_abort")
+                return
+
         if not self._drive_to_goal():
             self._pub("failed", error="drive_failed")
             return
+
+        if self.require_enter_between_phases:
+            if not self._wait_for_enter("Phase 2 complete. Press Enter to start Phase 3 (final align)."):
+                self._pub("failed", error="user_abort")
+                return
 
         if not self._align_orientation():
             self._pub("failed", error="align_failed")
