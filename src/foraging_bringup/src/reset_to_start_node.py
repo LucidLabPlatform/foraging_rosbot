@@ -217,7 +217,7 @@ class ResetToStart:
 
         msg = MoveBaseActionGoal()
         msg.header.stamp = rospy.Time.now()
-        msg.goal_id.stamp = rospy.Time.now()
+        msg.goal_id.stamp = rospy.Time(0)
         msg.goal_id.id = goal_id
         msg.goal.target_pose.header.frame_id = "odom"
         msg.goal.target_pose.header.stamp = rospy.Time.now()
