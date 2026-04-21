@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Rotate the ROSbot in place to face the goal position using OptiTrack.
+"""Rotate the ROSbot in place until it faces the start position.
 
-Does nothing else — no driving, no position correction.
-Once the robot's heading points toward (goal_x, goal_y) within yaw_tolerance,
-publishes success and exits.
+Uses OptiTrack for both position (where the robot is) and orientation
+(which way it is currently facing). Rotates until the robot's heading
+points toward (goal_x, goal_y) within yaw_tolerance radians.
 
 Launched via:
     roslaunch foraging_bringup reset_to_start.launch \
@@ -25,16 +25,11 @@ class ResetToStart:
     CTRL_HZ = 20
 
     def __init__(self):
-        self.goal_x          = rospy.get_param("~goal_x",          0.0)
-        self.goal_y          = rospy.get_param("~goal_y",          0.0)
-        self.yaw_tolerance   = rospy.get_param("~yaw_tolerance",   0.10)
+        self.goal_x          = rospy.get_param("~goal_x",          2.9812698364257812)
+        self.goal_y          = rospy.get_param("~goal_y",          1.8299084901809692)
+        self.yaw_tolerance   = rospy.get_param("~yaw_tolerance",   0.10)   # ~6 deg
         self.max_angular_vel = rospy.get_param("~max_angular_vel", 0.40)
         self.k_ang           = rospy.get_param("~k_ang",           1.0)
-
-        rospy.loginfo(
-            "[reset] Will face: x=%.3f y=%.3f  tol=%.2f rad",
-            self.goal_x, self.goal_y, self.yaw_tolerance,
-        )
 
         self._ot_pose  = None
         self._ot_lock  = threading.Lock()
@@ -51,6 +46,7 @@ class ResetToStart:
         self._ot_event.set()
 
     def _pose(self):
+        """Return (x, y, yaw_rad) from the latest OptiTrack message."""
         with self._ot_lock:
             msg = self._ot_pose
         if msg is None:
@@ -72,15 +68,13 @@ class ResetToStart:
         self._status_pub.publish(json.dumps(payload))
         rospy.loginfo("[reset] %s", payload)
 
-    def _clamp(self, v, limit):
-        return max(-limit, min(limit, v))
-
     def run(self):
-        self._pub("waiting_for_optitrack")
         rospy.loginfo("[reset] Waiting for OptiTrack...")
+        self._pub("waiting_for_optitrack")
+
         if not self._ot_event.wait(timeout=30.0):
             self._pub("error", error="OptiTrack timeout")
-            return False
+            return
 
         rate = rospy.Rate(self.CTRL_HZ)
 
@@ -89,22 +83,41 @@ class ResetToStart:
             if pose is None:
                 self._stop()
                 self._pub("error", error="OptiTrack lost")
-                return False
+                return
 
             x, y, yaw = pose
+
+            # Direction from current position toward the goal
             target_heading = math.atan2(self.goal_y - y, self.goal_x - x)
             err = self._wrap(target_heading - yaw)
 
-            self._pub("rotating", heading_error_deg=round(math.degrees(err), 1))
+            rospy.loginfo_throttle(
+                0.5,
+                "[reset] pos=(%.3f, %.3f)  yaw=%.1f°  target=%.1f°  err=%.1f°",
+                x, y,
+                math.degrees(yaw),
+                math.degrees(target_heading),
+                math.degrees(err),
+            )
+
+            self._pub("rotating",
+                      current_yaw_deg=round(math.degrees(yaw), 1),
+                      target_heading_deg=round(math.degrees(target_heading), 1),
+                      heading_error_deg=round(math.degrees(err), 1))
 
             if abs(err) <= self.yaw_tolerance:
                 self._stop()
-                self._pub("success", heading_error_deg=round(math.degrees(err), 1))
-                rospy.loginfo("[reset] Facing goal — done.")
-                return True
+                self._pub("success",
+                          current_yaw_deg=round(math.degrees(yaw), 1),
+                          target_heading_deg=round(math.degrees(target_heading), 1),
+                          heading_error_deg=round(math.degrees(err), 1))
+                rospy.loginfo("[reset] Done — robot is facing the start position.")
+                return
 
+            # Proportional rotation, capped to max_angular_vel
             cmd = Twist()
-            cmd.angular.z = self._clamp(self.k_ang * err, self.max_angular_vel)
+            cmd.angular.z = max(-self.max_angular_vel,
+                                min(self.max_angular_vel, self.k_ang * err))
             self._cmd_vel_pub.publish(cmd)
             rate.sleep()
 
