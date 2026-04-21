@@ -38,14 +38,14 @@ class GoToHardcodedGoal:
         self.heading_threshold = rospy.get_param("~heading_threshold", 0.30)
 
         # Hardcoded goal pose
-        self.goal_x = 2.981062650680542
-        self.goal_y = 1.8255693912506104
-        self.goal_z = 0.431333988904953
+        self.goal_x = 2.987614393234253
+        self.goal_y = 1.837099552154541
+        self.goal_z = 0.431474506855011
 
-        self.goal_qx = 0.04384467005729675
-        self.goal_qy = -0.012470778077840805
-        self.goal_qz = -0.4383017122745514
-        self.goal_qw = 0.8976712822914124
+        self.goal_qx = -0.024460850283503532
+        self.goal_qy = 0.011780226603150368
+        self.goal_qz = 0.9265028834342957
+        self.goal_qw = -0.37530723214149475
 
         _, _, self.goal_yaw = euler_from_quaternion(
             [self.goal_qx, self.goal_qy, self.goal_qz, self.goal_qw]
