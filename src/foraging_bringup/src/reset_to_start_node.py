@@ -30,16 +30,30 @@ class ResetToStart:
         self.goal_x             = rospy.get_param("~goal_x",             2.9812698364257812)
         self.goal_y             = rospy.get_param("~goal_y",             1.8299084901809692)
         self.goal_orientation_z = rospy.get_param("~goal_orientation_z", -0.4383017122745514)
+        self.goal_qx            = rospy.get_param("~goal_qx",            None)
+        self.goal_qy            = rospy.get_param("~goal_qy",            None)
+        self.goal_qz            = rospy.get_param("~goal_qz",            None)
+        self.goal_qw            = rospy.get_param("~goal_qw",            None)
 
         # Tolerances
         self.pos_tolerance      = rospy.get_param("~pos_tolerance",      0.10)   # metres
-        self.orient_tolerance   = rospy.get_param("~orient_tolerance",   0.01)   # orientation.z units (~1 deg)
+        # NOTE: this is now a yaw tolerance in radians (not quaternion.z units).
+        self.orient_tolerance   = rospy.get_param("~orient_tolerance",   0.05)   # rad (~3 deg)
 
         # Gains and limits
         self.max_linear_vel     = rospy.get_param("~max_linear_vel",     0.15)
         self.max_angular_vel    = rospy.get_param("~max_angular_vel",    0.40)
         self.k_lin              = rospy.get_param("~k_lin",              0.3)
         self.k_ang              = rospy.get_param("~k_ang",              2.0)
+
+        # OptiTrack rigid-body axis conventions vary; these calibrate reported yaw.
+        # Common case: marker/rigid-body forward axis is flipped -> yaw_offset = pi.
+        self.yaw_sign           = rospy.get_param("~yaw_sign",           1.0)   # set -1.0 to flip yaw direction
+        self.yaw_offset         = rospy.get_param("~yaw_offset",         0.0)   # rad, added after sign
+
+        # Some setups have inverted angular direction between OptiTrack yaw and /cmd_vel.
+        # Use -1.0 to flip turns if the robot rotates away from the goal.
+        self.angular_sign       = rospy.get_param("~angular_sign",       1.0)
 
         # Interactive gating between phases (useful for step-by-step resets)
         self.require_enter_between_phases = rospy.get_param("~require_enter_between_phases", True)
@@ -86,11 +100,20 @@ class ResetToStart:
 
     def _goal_yaw(self):
         """
-        Convert stored goal_orientation_z (assumed sin(yaw/2)) to yaw.
-        This matches how the original node treated orientation.z for planar yaw.
+        Goal yaw for final alignment.
+
+        Prefer full goal quaternion params (~goal_qx/qy/qz/qw) when provided.
+        Otherwise fall back to the legacy ~goal_orientation_z (assumed sin(yaw/2)).
         """
+        if None not in (self.goal_qx, self.goal_qy, self.goal_qz, self.goal_qw):
+            return self._yaw_from_quat(float(self.goal_qx), float(self.goal_qy), float(self.goal_qz), float(self.goal_qw))
         z = max(-1.0, min(1.0, float(self.goal_orientation_z)))
         return 2.0 * math.asin(z)
+
+    def _calibrated_yaw(self, qx, qy, qz, qw):
+        """Yaw from quaternion after applying sign + offset calibration."""
+        raw = self._yaw_from_quat(qx, qy, qz, qw)
+        return self._wrap_pi(self.yaw_sign * raw + self.yaw_offset)
 
     def _stop(self):
         self._cmd_vel_pub.publish(Twist())
@@ -138,19 +161,21 @@ class ResetToStart:
                 return False
 
             x, y, qx, qy, qz, qw = pose
-            yaw = self._yaw_from_quat(qx, qy, qz, qw)
+            yaw = self._calibrated_yaw(qx, qy, qz, qw)
             target_yaw = self._target_yaw_toward_goal(x, y)
             err = self._wrap_pi(target_yaw - yaw)
 
             rospy.loginfo_throttle(0.5,
-                "[reset] face_goal  yaw=%.3f  target=%.3f  err=%.3f", yaw, target_yaw, err)
+                "[reset] face_goal  yaw=%.3f  target=%.3f  err=%.3f  cmd_w=%.3f",
+                yaw, target_yaw, err,
+                self.angular_sign * self._clamp(self.k_ang * err, self.max_angular_vel))
 
             if abs(err) <= self.orient_tolerance:
                 self._stop()
                 return True
 
             cmd = Twist()
-            cmd.angular.z = self._clamp(self.k_ang * err, self.max_angular_vel)
+            cmd.angular.z = self.angular_sign * self._clamp(self.k_ang * err, self.max_angular_vel)
             self._cmd_vel_pub.publish(cmd)
             rate.sleep()
 
@@ -170,7 +195,7 @@ class ResetToStart:
                 return False
 
             x, y, qx, qy, qz, qw = pose
-            yaw = self._yaw_from_quat(qx, qy, qz, qw)
+            yaw = self._calibrated_yaw(qx, qy, qz, qw)
             dist = math.hypot(self.goal_x - x, self.goal_y - y)
 
             self._pub("navigating", pos_error=round(dist, 3))
@@ -187,11 +212,11 @@ class ResetToStart:
             lin = min(lin, self.max_linear_vel)
             lin *= max(0.0, 1.0 - abs(heading_err) / 0.2)
 
-            ang = self._clamp(self.k_ang * heading_err, self.max_angular_vel)
+            ang = self.angular_sign * self._clamp(self.k_ang * heading_err, self.max_angular_vel)
 
             rospy.loginfo_throttle(0.5,
-                "[reset] drive  dist=%.3fm  yaw=%.3f  target=%.3f  err=%.3f  lin=%.3f",
-                dist, yaw, target_yaw, heading_err, lin)
+                "[reset] drive  dist=%.3fm  yaw=%.3f  target=%.3f  err=%.3f  lin=%.3f  cmd_w=%.3f",
+                dist, yaw, target_yaw, heading_err, lin, ang)
 
             cmd = Twist()
             cmd.linear.x  = lin
@@ -215,20 +240,21 @@ class ResetToStart:
                 return False
 
             _, _, qx, qy, qz, qw = pose
-            yaw = self._yaw_from_quat(qx, qy, qz, qw)
+            yaw = self._calibrated_yaw(qx, qy, qz, qw)
             target_yaw = self._goal_yaw()
             err = self._wrap_pi(target_yaw - yaw)
 
             rospy.loginfo_throttle(0.5,
-                "[reset] align  yaw=%.3f  target=%.3f  err=%.3f",
-                yaw, target_yaw, err)
+                "[reset] align  yaw=%.3f  target=%.3f  err=%.3f  cmd_w=%.3f",
+                yaw, target_yaw, err,
+                self.angular_sign * self._clamp(self.k_ang * err, self.max_angular_vel))
 
             if abs(err) <= self.orient_tolerance:
                 self._stop()
                 return True
 
             cmd = Twist()
-            cmd.angular.z = self._clamp(self.k_ang * err, self.max_angular_vel)
+            cmd.angular.z = self.angular_sign * self._clamp(self.k_ang * err, self.max_angular_vel)
             self._cmd_vel_pub.publish(cmd)
             rate.sleep()
 
