@@ -61,18 +61,36 @@ class ResetToStart:
         self._ot_event.set()
 
     def _pose(self):
-        """Return (x, y, orientation_z) or None."""
+        """Return (x, y, qx, qy, qz, qw) or None."""
         with self._ot_lock:
             msg = self._ot_pose
         if msg is None:
             return None
         p = msg.pose
-        return p.position.x, p.position.y, p.orientation.z
+        o = p.orientation
+        return p.position.x, p.position.y, o.x, o.y, o.z, o.w
 
-    def _target_z_toward_goal(self, x, y):
-        """orientation.z that corresponds to facing (goal_x, goal_y) from (x, y)."""
-        yaw = math.atan2(self.goal_y - y, self.goal_x - x)
-        return math.sin(yaw / 2.0)
+    def _yaw_from_quat(self, qx, qy, qz, qw):
+        """Planar yaw from quaternion (assumes roll/pitch ~ 0)."""
+        # Robust yaw extraction (works even if roll/pitch noise exists)
+        siny_cosp = 2.0 * (qw * qz + qx * qy)
+        cosy_cosp = 1.0 - 2.0 * (qy * qy + qz * qz)
+        return math.atan2(siny_cosp, cosy_cosp)
+
+    def _wrap_pi(self, ang):
+        return (ang + math.pi) % (2.0 * math.pi) - math.pi
+
+    def _target_yaw_toward_goal(self, x, y):
+        """Yaw that faces (goal_x, goal_y) from (x, y)."""
+        return math.atan2(self.goal_y - y, self.goal_x - x)
+
+    def _goal_yaw(self):
+        """
+        Convert stored goal_orientation_z (assumed sin(yaw/2)) to yaw.
+        This matches how the original node treated orientation.z for planar yaw.
+        """
+        z = max(-1.0, min(1.0, float(self.goal_orientation_z)))
+        return 2.0 * math.asin(z)
 
     def _stop(self):
         self._cmd_vel_pub.publish(Twist())
@@ -109,7 +127,7 @@ class ResetToStart:
     # ── Phase 1: rotate to face the goal ──────────────────────────────────
 
     def _face_goal(self):
-        """Rotate until orientation.z matches the direction toward goal."""
+        """Rotate until yaw matches the direction toward goal."""
         rospy.loginfo("[reset] Phase 1: rotating to face goal")
         rate = rospy.Rate(self.CTRL_HZ)
 
@@ -119,12 +137,13 @@ class ResetToStart:
                 self._stop()
                 return False
 
-            x, y, oz = pose
-            target_z = self._target_z_toward_goal(x, y)
-            err = target_z - oz
+            x, y, qx, qy, qz, qw = pose
+            yaw = self._yaw_from_quat(qx, qy, qz, qw)
+            target_yaw = self._target_yaw_toward_goal(x, y)
+            err = self._wrap_pi(target_yaw - yaw)
 
             rospy.loginfo_throttle(0.5,
-                "[reset] face_goal  oz=%.4f  target_z=%.4f  err=%.4f", oz, target_z, err)
+                "[reset] face_goal  yaw=%.3f  target=%.3f  err=%.3f", yaw, target_yaw, err)
 
             if abs(err) <= self.orient_tolerance:
                 self._stop()
@@ -150,7 +169,8 @@ class ResetToStart:
                 self._stop()
                 return False
 
-            x, y, oz = pose
+            x, y, qx, qy, qz, qw = pose
+            yaw = self._yaw_from_quat(qx, qy, qz, qw)
             dist = math.hypot(self.goal_x - x, self.goal_y - y)
 
             self._pub("navigating", pos_error=round(dist, 3))
@@ -159,8 +179,8 @@ class ResetToStart:
                 self._stop()
                 return True
 
-            target_z = self._target_z_toward_goal(x, y)
-            heading_err = target_z - oz
+            target_yaw = self._target_yaw_toward_goal(x, y)
+            heading_err = self._wrap_pi(target_yaw - yaw)
 
             # Forward speed proportional to distance, reduce when heading is off
             lin = self.k_lin * dist
@@ -170,8 +190,8 @@ class ResetToStart:
             ang = self._clamp(self.k_ang * heading_err, self.max_angular_vel)
 
             rospy.loginfo_throttle(0.5,
-                "[reset] drive  dist=%.3fm  oz=%.4f  target_z=%.4f  err=%.4f  lin=%.3f",
-                dist, oz, target_z, heading_err, lin)
+                "[reset] drive  dist=%.3fm  yaw=%.3f  target=%.3f  err=%.3f  lin=%.3f",
+                dist, yaw, target_yaw, heading_err, lin)
 
             cmd = Twist()
             cmd.linear.x  = lin
@@ -194,12 +214,14 @@ class ResetToStart:
                 self._stop()
                 return False
 
-            oz = pose[2]
-            err = self.goal_orientation_z - oz
+            _, _, qx, qy, qz, qw = pose
+            yaw = self._yaw_from_quat(qx, qy, qz, qw)
+            target_yaw = self._goal_yaw()
+            err = self._wrap_pi(target_yaw - yaw)
 
             rospy.loginfo_throttle(0.5,
-                "[reset] align  oz=%.4f  target=%.4f  err=%.4f",
-                oz, self.goal_orientation_z, err)
+                "[reset] align  yaw=%.3f  target=%.3f  err=%.3f",
+                yaw, target_yaw, err)
 
             if abs(err) <= self.orient_tolerance:
                 self._stop()
