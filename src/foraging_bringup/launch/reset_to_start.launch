@@ -1,19 +1,28 @@
 <launch>
-    <!-- orientation.z from OptiTrack when robot is at start with correct orientation -->
+    <!-- Start-position reference (OptiTrack frame) -->
+    <arg name="goal_x"              default="2.9812698364257812"/>
+    <arg name="goal_y"              default="1.8299084901809692"/>
     <arg name="goal_orientation_z"  default="-0.4383017122745514"/>
 
-    <!-- Tolerance in orientation.z units (0.01 ≈ 1 deg) -->
-    <arg name="tolerance"           default="0.01"/>
+    <!-- Tolerances -->
+    <arg name="pos_tolerance"       default="0.10"/>
+    <arg name="orient_tolerance"    default="0.01"/>
 
-    <!-- Velocity limits -->
+    <!-- Gains and velocity limits -->
+    <arg name="max_linear_vel"      default="0.15"/>
     <arg name="max_angular_vel"     default="0.40"/>
+    <arg name="k_lin"               default="0.3"/>
     <arg name="k_ang"               default="2.0"/>
 
-    <!-- Direct-drive reset node -->
     <node name="reset_to_start" pkg="foraging_bringup" type="reset_to_start_node.py" output="screen">
+        <param name="goal_x"              value="$(arg goal_x)"/>
+        <param name="goal_y"              value="$(arg goal_y)"/>
         <param name="goal_orientation_z"  value="$(arg goal_orientation_z)"/>
-        <param name="tolerance"           value="$(arg tolerance)"/>
+        <param name="pos_tolerance"       value="$(arg pos_tolerance)"/>
+        <param name="orient_tolerance"    value="$(arg orient_tolerance)"/>
+        <param name="max_linear_vel"      value="$(arg max_linear_vel)"/>
         <param name="max_angular_vel"     value="$(arg max_angular_vel)"/>
+        <param name="k_lin"               value="$(arg k_lin)"/>
         <param name="k_ang"               value="$(arg k_ang)"/>
     </node>
 </launch>
