@@ -215,10 +215,11 @@ class ResetToStart:
 
     # ── Phase 2: drive to position ─────────────────────────────────────────
 
+    # If heading error exceeds this during drive, stop and re-align before continuing
+    REALIGN_THRESH = 0.35   # rad (~20 deg)
+
     def _drive_to(self, tx, ty):
-        """Drive to (tx, ty) with PID + range safety. Returns True on success."""
-        self._lin_pid.reset()
-        self._ang_pid.reset()
+        """Drive to (tx, ty). Stops to re-align if heading drifts. Returns True on success."""
         rate = rospy.Rate(self.CTRL_HZ)
         deadline = time.time() + self.nav_timeout
 
@@ -240,20 +241,25 @@ class ResetToStart:
             target_heading = math.atan2(dy, dx)
             heading_err = self._yaw_err(target_heading, yaw)
 
-            # cos factor: reduce linear vel when heading is off
-            heading_factor = max(0.0, math.cos(heading_err))
-            # range safety: scale down when obstacle ahead
+            # If heading is too far off, stop and rotate back on track
+            if abs(heading_err) > self.REALIGN_THRESH:
+                self._stop()
+                self._rotate_to(target_heading, tolerance=0.15)
+                continue
+
+            # Heading is good: drive straight with gentle correction only
             range_scale = self._forward_scale()
-            # decel ramp: cap speed proportional to distance so robot creeps to stop
+            if range_scale == 0.0:
+                rospy.logwarn_throttle(1.0, "[reset] Front obstacle — waiting")
+                self._stop()
+                rate.sleep()
+                continue
+
+            # Decel ramp: slow down as we approach
             decel_cap = min(self.max_linear_vel, dist * 0.5)
-
-            lin_vel = min(self._lin_pid.compute(dist), decel_cap) * heading_factor * range_scale
-            ang_vel = self._ang_pid.compute(heading_err)
-
-            if range_scale < 1.0:
-                rospy.logwarn_throttle(
-                    1.0, "[reset] Front obstacle: scale=%.2f", range_scale,
-                )
+            lin_vel = decel_cap * range_scale
+            ang_vel = max(-self.max_angular_vel * 0.4,
+                          min(self.max_angular_vel * 0.4, heading_err * 0.6))
 
             cmd = Twist()
             cmd.linear.x = lin_vel
