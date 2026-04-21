@@ -27,8 +27,8 @@ class GoToHardcodedGoal:
         self.k_final_yaw = rospy.get_param("~k_final_yaw", 1.5)
 
         # Velocity limits
-        self.max_linear = rospy.get_param("~max_linear", 0.25)
-        self.max_angular = rospy.get_param("~max_angular", 1.0)
+        self.max_linear = rospy.get_param("~max_linear", 0.10)
+        self.max_angular = rospy.get_param("~max_angular", 0.5)
 
         # Tolerances
         self.pos_tolerance = rospy.get_param("~pos_tolerance", 0.05)
