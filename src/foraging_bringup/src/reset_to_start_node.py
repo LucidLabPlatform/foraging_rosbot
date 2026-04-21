@@ -149,19 +149,19 @@ class ResetToStart:
 
             heading_err = self._wrap(math.atan2(dy, dx) - yaw)
 
-            # Unicycle control law
-            lin = self.k_lin * dist * max(0.0, math.cos(heading_err))
-            ang = self.k_ang * heading_err
+            # Rotate-only until roughly facing goal, then drive
+            if abs(heading_err) > 0.5:   # ~30 deg — rotate in place
+                lin = 0.0
+            else:
+                lin = self.k_lin * dist * max(0.0, math.cos(heading_err))
+                lin = min(lin, self.max_linear_vel)
+                # Range safety (only matters when driving forward)
+                scale = self._front_clear()
+                lin  *= scale
+                if scale == 0.0:
+                    rospy.logwarn_throttle(1.0, "[reset] Obstacle — holding")
 
-            # Cap to limits
-            lin = min(lin, self.max_linear_vel)
-            ang = self._clamp(ang, self.max_angular_vel)
-
-            # Range safety
-            scale = self._front_clear()
-            lin  *= scale
-            if scale == 0.0:
-                rospy.logwarn_throttle(1.0, "[reset] Obstacle — holding")
+            ang = self._clamp(self.k_ang * heading_err, self.max_angular_vel)
 
             cmd = Twist()
             cmd.linear.x  = lin
