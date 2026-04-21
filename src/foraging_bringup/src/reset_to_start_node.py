@@ -4,6 +4,7 @@ import math
 import rospy
 from geometry_msgs.msg import PoseStamped, Twist
 from tf.transformations import euler_from_quaternion
+from foraging_msgs.msg import ResetStatus
 
 
 def wrap_angle(angle: float) -> float:
@@ -58,6 +59,9 @@ class GoToHardcodedGoal:
             self.pose_topic, PoseStamped, self.pose_callback, queue_size=1
         )
         self.cmd_pub = rospy.Publisher(self.cmd_topic, Twist, queue_size=1)
+        self.status_pub = rospy.Publisher(
+            "/reset_to_start/status", ResetStatus, queue_size=1, latch=True
+        )
 
         rospy.on_shutdown(self.stop_robot)
 
@@ -67,6 +71,15 @@ class GoToHardcodedGoal:
 
     def pose_callback(self, msg: PoseStamped):
         self.current_pose = msg
+
+    def _publish_status(self, state: str, pos_error: float = 0.0,
+                        yaw_error: float = 0.0, error_msg: str = ""):
+        msg = ResetStatus()
+        msg.state = state
+        msg.pos_error = float(pos_error)
+        msg.yaw_error = float(yaw_error)
+        msg.error_msg = error_msg
+        self.status_pub.publish(msg)
 
     def stop_robot(self):
         self.cmd_pub.publish(Twist())
@@ -78,6 +91,7 @@ class GoToHardcodedGoal:
 
     def run(self):
         rate = rospy.Rate(20)
+        self._publish_status("waiting_for_optitrack")
 
         while not rospy.is_shutdown():
             if self.current_pose is None:
@@ -139,8 +153,15 @@ class GoToHardcodedGoal:
                 if not self.goal_reached:
                     rospy.loginfo("Goal reached.")
                     self.goal_reached = True
+                    self._publish_status("success",
+                                         pos_error=distance,
+                                         yaw_error=abs(final_yaw_error))
 
             self.cmd_pub.publish(cmd)
+            if not self.goal_reached:
+                self._publish_status("running",
+                                     pos_error=distance,
+                                     yaw_error=abs(final_yaw_error))
 
             rospy.loginfo_throttle(
                 1.0,

@@ -1,28 +1,42 @@
 <launch>
-    <!-- Start-position reference (OptiTrack frame) -->
-    <arg name="goal_x"              default="2.9812698364257812"/>
-    <arg name="goal_y"              default="1.8299084901809692"/>
-    <arg name="goal_orientation_z"  default="-0.4383017122745514"/>
+    <!-- Goal position (OptiTrack frame) -->
+    <arg name="goal_x"   default="2.987614393234253"/>
+    <arg name="goal_y"   default="1.837099552154541"/>
+
+    <!-- Goal orientation quaternion (recorded at start position) -->
+    <arg name="goal_qx"  default="-0.024460850283503532"/>
+    <arg name="goal_qy"  default="0.011780226603150368"/>
+    <arg name="goal_qz"  default="0.9265028834342957"/>
+    <arg name="goal_qw"  default="-0.37530723214149475"/>
 
     <!-- Tolerances -->
-    <arg name="pos_tolerance"       default="0.10"/>
-    <arg name="orient_tolerance"    default="0.01"/>
+    <arg name="pos_tolerance"     default="0.05"/>
+    <arg name="yaw_tolerance"     default="0.05"/>
+    <arg name="heading_threshold" default="0.30"/>
 
-    <!-- Gains and velocity limits -->
-    <arg name="max_linear_vel"      default="0.15"/>
-    <arg name="max_angular_vel"     default="0.40"/>
-    <arg name="k_lin"               default="0.3"/>
-    <arg name="k_ang"               default="2.0"/>
+    <!-- Gains -->
+    <arg name="k_linear"    default="0.7"/>
+    <arg name="k_angular"   default="2.0"/>
+    <arg name="k_final_yaw" default="1.5"/>
+
+    <!-- Velocity limits -->
+    <arg name="max_linear"  default="0.25"/>
+    <arg name="max_angular" default="1.0"/>
 
     <node name="reset_to_start" pkg="foraging_bringup" type="reset_to_start_node.py" output="screen">
-        <param name="goal_x"              value="$(arg goal_x)"/>
-        <param name="goal_y"              value="$(arg goal_y)"/>
-        <param name="goal_orientation_z"  value="$(arg goal_orientation_z)"/>
-        <param name="pos_tolerance"       value="$(arg pos_tolerance)"/>
-        <param name="orient_tolerance"    value="$(arg orient_tolerance)"/>
-        <param name="max_linear_vel"      value="$(arg max_linear_vel)"/>
-        <param name="max_angular_vel"     value="$(arg max_angular_vel)"/>
-        <param name="k_lin"               value="$(arg k_lin)"/>
-        <param name="k_ang"               value="$(arg k_ang)"/>
+        <param name="goal_x"            value="$(arg goal_x)"/>
+        <param name="goal_y"            value="$(arg goal_y)"/>
+        <param name="goal_qx"           value="$(arg goal_qx)"/>
+        <param name="goal_qy"           value="$(arg goal_qy)"/>
+        <param name="goal_qz"           value="$(arg goal_qz)"/>
+        <param name="goal_qw"           value="$(arg goal_qw)"/>
+        <param name="pos_tolerance"     value="$(arg pos_tolerance)"/>
+        <param name="yaw_tolerance"     value="$(arg yaw_tolerance)"/>
+        <param name="heading_threshold" value="$(arg heading_threshold)"/>
+        <param name="k_linear"          value="$(arg k_linear)"/>
+        <param name="k_angular"         value="$(arg k_angular)"/>
+        <param name="k_final_yaw"       value="$(arg k_final_yaw)"/>
+        <param name="max_linear"        value="$(arg max_linear)"/>
+        <param name="max_angular"       value="$(arg max_angular)"/>
     </node>
 </launch>

@@ -57,6 +57,7 @@ add_message_files(
   RawArucoDetected.msg
   ArucoDetected.msg
   ArucoRegistry.msg
+  ResetStatus.msg
 )
 
 ## Generate services in the 'srv' folder
