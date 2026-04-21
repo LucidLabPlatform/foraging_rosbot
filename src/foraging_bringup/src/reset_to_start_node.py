@@ -1,409 +1,355 @@
 #!/usr/bin/env python3
 """Navigate the ROSbot back to its starting position using OptiTrack.
 
-Uses move_base (raw-topic interface, no actionlib handshake) in odom frame
-for obstacle avoidance via LIDAR.  OptiTrack provides absolute positioning;
-iterative correction compensates for odometry drift.
+Direct-drive PID control in OptiTrack frame — no move_base, no odom/TF.
+IR range sensors (fl/fr/rl/rr) provide front-obstacle safety.
+
+Three-phase per attempt:
+  1. Rotate in place to face the start position
+  2. Drive to start position (linear + heading PID, range safety)
+  3. Rotate in place to final yaw
 
 Launched via:
     roslaunch foraging_bringup reset_to_start.launch \
         start_x:=1.5 start_y:=2.0 start_yaw:=0.78
-
-Or via LUCID MQTT roslaunch_start command with the same args.
 """
 
 import json
 import math
 import threading
 import time
-import uuid
 
 import rospy
-import tf
 import tf.transformations as tft
-from actionlib_msgs.msg import GoalID, GoalStatus, GoalStatusArray
-from geometry_msgs.msg import PoseStamped, Quaternion
-from move_base_msgs.msg import MoveBaseActionGoal, MoveBaseActionResult
+from geometry_msgs.msg import PoseStamped, Twist
+from sensor_msgs.msg import Range
 from std_msgs.msg import String
 
 
+class PID:
+    """PD controller (no integral to avoid windup)."""
+
+    def __init__(self, kp, kd, out_min, out_max):
+        self.kp = kp
+        self.kd = kd
+        self.out_min = out_min
+        self.out_max = out_max
+        self._prev_error = None
+        self._prev_time = None
+
+    def reset(self):
+        self._prev_error = None
+        self._prev_time = None
+
+    def compute(self, error):
+        now = time.time()
+        dt = (now - self._prev_time) if self._prev_time is not None else 0.05
+        dt = max(dt, 0.001)
+        derivative = ((error - self._prev_error) / dt
+                      if self._prev_error is not None else 0.0)
+        self._prev_error = error
+        self._prev_time = now
+        output = self.kp * error + self.kd * derivative
+        return max(self.out_min, min(self.out_max, output))
+
+
 class ResetToStart:
-    """OptiTrack-guided reset-to-start with iterative correction."""
+    """OptiTrack-guided direct-drive reset with IR range-sensor safety."""
+
+    # IR sensor safety (valid readings are 0.03–0.90 m; <0 means no obstacle)
+    FRONT_STOP_M = 0.10   # stop forward motion if obstacle within 10 cm
+    FRONT_SLOW_M = 0.25   # linearly reduce speed between 25 cm and 10 cm
+
+    CTRL_HZ = 20          # PID loop rate
 
     def __init__(self):
         # ── Parameters ────────────────────────────────────────────────────
-        self.start_x = rospy.get_param("~start_x", 0.0)
-        self.start_y = rospy.get_param("~start_y", 0.0)
-        self.start_yaw = rospy.get_param("~start_yaw", 0.0)
-        self.pos_tolerance = rospy.get_param("~pos_tolerance", 0.10)
-        self.yaw_tolerance = rospy.get_param("~yaw_tolerance", 0.15)
-        self.max_corrections = int(rospy.get_param("~max_corrections", 3))
-        self.nav_timeout = rospy.get_param("~nav_timeout", 60.0)
+        self.start_x         = rospy.get_param("~start_x",         0.0)
+        self.start_y         = rospy.get_param("~start_y",         0.0)
+        self.start_yaw       = rospy.get_param("~start_yaw",       0.0)
+        self.pos_tolerance   = rospy.get_param("~pos_tolerance",   0.10)
+        self.yaw_tolerance   = rospy.get_param("~yaw_tolerance",   0.15)
+        self.max_corrections = int(rospy.get_param("~max_corrections", 5))
+        self.nav_timeout     = rospy.get_param("~nav_timeout",     60.0)
+        self.max_linear_vel  = rospy.get_param("~max_linear_vel",  0.20)
+        self.max_angular_vel = rospy.get_param("~max_angular_vel", 0.60)
 
         rospy.loginfo(
-            "[reset] Start pose (OptiTrack): x=%.3f y=%.3f yaw=%.2f deg",
+            "[reset] Start: x=%.3f y=%.3f yaw=%.1f deg  tol=%.2fm/%.2frad",
             self.start_x, self.start_y, math.degrees(self.start_yaw),
-        )
-        rospy.loginfo(
-            "[reset] Tolerances: pos=%.3fm yaw=%.2f rad  max_corrections=%d",
-            self.pos_tolerance, self.yaw_tolerance, self.max_corrections,
+            self.pos_tolerance, self.yaw_tolerance,
         )
 
-        # ── TF listener (odom → base_link) ────────────────────────────────
-        self.tf_listener = tf.TransformListener()
+        # ── PID controllers ────────────────────────────────────────────────
+        self._lin_pid = PID(
+            kp=0.6, kd=0.08,
+            out_min=0.0, out_max=self.max_linear_vel,
+        )
+        self._ang_pid = PID(
+            kp=1.4, kd=0.10,
+            out_min=-self.max_angular_vel, out_max=self.max_angular_vel,
+        )
 
-        # ── OptiTrack pose (updated by subscriber) ────────────────────────
-        self._optitrack_pose = None
-        self._optitrack_lock = threading.Lock()
-        self._optitrack_event = threading.Event()
+        # ── OptiTrack pose ─────────────────────────────────────────────────
+        self._ot_pose = None
+        self._ot_lock = threading.Lock()
+        self._ot_event = threading.Event()
 
-        # ── Status publisher (latched for MQTT bridge) ────────────────────
+        # ── IR range sensors ───────────────────────────────────────────────
+        self._range = {"fl": float("inf"), "fr": float("inf"),
+                       "rl": float("inf"), "rr": float("inf")}
+        self._range_lock = threading.Lock()
+
+        # ── Publishers ─────────────────────────────────────────────────────
         self._status_pub = rospy.Publisher(
             "/reset_to_start/status", String, queue_size=1, latch=True,
         )
+        self._cmd_vel_pub = rospy.Publisher("/cmd_vel", Twist, queue_size=1)
 
-        # ── Navigating flag (set True while move_base is active) ─────────
-        self._navigating = False
-
-        # ── OptiTrack subscriber ──────────────────────────────────────────
+        # ── Subscribers ────────────────────────────────────────────────────
         rospy.Subscriber(
             "/optitrack/rosbot/pose", PoseStamped,
-            self._optitrack_cb, queue_size=1,
+            self._ot_cb, queue_size=1,
         )
-
-        # ── move_base raw-topic interface ─────────────────────────────────
-        # actionlib TCPROS handshake fails in distributed ROS setup;
-        # use raw topics (same pattern as move_base_client.py).
-        self._goal_pub = rospy.Publisher(
-            "/move_base/goal", MoveBaseActionGoal, queue_size=1,
-        )
-        self._cancel_pub = rospy.Publisher(
-            "/move_base/cancel", GoalID, queue_size=1,
-        )
-        self._current_goal_id = None
-        self._result_event = threading.Event()
-        self._result_status = None
-        self._server_up = threading.Event()
-
-        rospy.Subscriber(
-            "/move_base/status", GoalStatusArray, self._status_cb,
-        )
-        rospy.Subscriber(
-            "/move_base/result", MoveBaseActionResult, self._result_cb,
-        )
-
-    # ── Callbacks ─────────────────────────────────────────────────────────
-
-    def _optitrack_cb(self, msg):
-        with self._optitrack_lock:
-            self._optitrack_pose = msg
-        self._optitrack_event.set()
-        if self._navigating:
-            pos_err, yaw_err = self._check_at_start(msg)
-            self._publish_status(
-                "navigating",
-                pos_error=round(pos_err, 3),
-                yaw_error=round(yaw_err, 3),
+        for name in ("fl", "fr", "rl", "rr"):
+            rospy.Subscriber(
+                f"/range/{name}", Range,
+                lambda msg, n=name: self._range_cb(msg, n),
+                queue_size=1,
             )
 
-    def _status_cb(self, _msg):
-        if not self._server_up.is_set():
-            self._server_up.set()
+    # ── Callbacks ──────────────────────────────────────────────────────────
 
-    def _result_cb(self, msg):
-        if (
-            self._current_goal_id is not None
-            and msg.status.goal_id.id == self._current_goal_id
-        ):
-            self._result_status = msg.status.status
-            self._result_event.set()
+    def _ot_cb(self, msg):
+        with self._ot_lock:
+            self._ot_pose = msg
+        self._ot_event.set()
 
-    # ── Status publishing ─────────────────────────────────────────────────
+    def _range_cb(self, msg, name):
+        # Values < min_range (including -1.0) mean no obstacle / out of range
+        value = msg.range if msg.range >= msg.min_range else float("inf")
+        with self._range_lock:
+            self._range[name] = value
 
-    def _publish_status(self, state, **extra):
-        payload = {"state": state}
-        payload.update(extra)
+    # ── Status ─────────────────────────────────────────────────────────────
+
+    def _pub_status(self, state, **kw):
+        payload = {"state": state, **kw}
         self._status_pub.publish(json.dumps(payload))
         rospy.loginfo("[reset] %s", payload)
 
-    # ── Pose helpers ──────────────────────────────────────────────────────
+    # ── Pose helpers ───────────────────────────────────────────────────────
 
     @staticmethod
-    def _pose_msg_to_xyyaw(pose_stamped):
-        """Extract (x, y, yaw) from a PoseStamped."""
+    def _to_xyyaw(pose_stamped):
         p = pose_stamped.pose
         q = [p.orientation.x, p.orientation.y, p.orientation.z, p.orientation.w]
         _, _, yaw = tft.euler_from_quaternion(q)
         return p.position.x, p.position.y, yaw
 
-    def _get_odom_pose(self):
-        """Get robot pose in odom frame as (x, y, yaw). Returns None on failure."""
-        try:
-            self.tf_listener.waitForTransform(
-                "odom", "base_link", rospy.Time(0), rospy.Duration(5.0),
-            )
-            trans, rot = self.tf_listener.lookupTransform(
-                "odom", "base_link", rospy.Time(0),
-            )
-            _, _, yaw = tft.euler_from_quaternion(rot)
-            return trans[0], trans[1], yaw
-        except (
-            tf.Exception,
-            tf.LookupException,
-            tf.ConnectivityException,
-            tf.ExtrapolationException,
-        ) as exc:
-            rospy.logwarn("[reset] TF odom→base_link failed: %s", exc)
+    def _pose(self):
+        """Return (x, y, yaw) from latest OptiTrack reading, or None."""
+        with self._ot_lock:
+            msg = self._ot_pose
+        return self._to_xyyaw(msg) if msg is not None else None
+
+    def _fresh_pose(self, timeout=5.0):
+        """Wait for a fresh OptiTrack message. Returns (x,y,yaw) or None."""
+        self._ot_event.clear()
+        if not self._ot_event.wait(timeout=timeout):
             return None
+        return self._pose()
 
-    # ── Coordinate transform ──────────────────────────────────────────────
+    # ── Range safety ───────────────────────────────────────────────────────
 
-    def _compute_start_in_odom(self, optitrack_msg):
-        """Transform start pose from OptiTrack frame to odom frame.
+    def _forward_scale(self):
+        """Speed scale [0, 1] based on front IR sensors."""
+        with self._range_lock:
+            front = min(self._range["fl"], self._range["fr"])
+        if front <= self.FRONT_STOP_M:
+            return 0.0
+        if front < self.FRONT_SLOW_M:
+            return (front - self.FRONT_STOP_M) / (self.FRONT_SLOW_M - self.FRONT_STOP_M)
+        return 1.0
 
-        Given two corresponding readings of the same robot:
-          OptiTrack: (ot_x, ot_y, ot_yaw)
-          Odom:      (od_x, od_y, od_yaw)
+    # ── Helpers ────────────────────────────────────────────────────────────
 
-        Compute a rigid-body transform T: OptiTrack → odom, then apply it
-        to the start pose (sx, sy, syaw) in OptiTrack frame.
+    @staticmethod
+    def _yaw_err(target, current):
+        return math.atan2(math.sin(target - current), math.cos(target - current))
 
-        Math:
-          delta_yaw = od_yaw - ot_yaw
-          v = (sx - ot_x, sy - ot_y)           # vector in OptiTrack frame
-          v_rot = R(delta_yaw) * v              # rotate into odom frame
-          goal = v_rot + (od_x, od_y)           # translate
-          goal_yaw = syaw + delta_yaw
-        """
-        ot_x, ot_y, ot_yaw = self._pose_msg_to_xyyaw(optitrack_msg)
+    def _stop(self):
+        self._cmd_vel_pub.publish(Twist())
 
-        odom = self._get_odom_pose()
-        if odom is None:
-            return None
-        od_x, od_y, od_yaw = odom
+    # ── Phase 1 & 3: rotate in place ───────────────────────────────────────
 
-        delta = od_yaw - ot_yaw
-        vx = self.start_x - ot_x
-        vy = self.start_y - ot_y
-
-        cos_d = math.cos(delta)
-        sin_d = math.sin(delta)
-        goal_x = vx * cos_d - vy * sin_d + od_x
-        goal_y = vx * sin_d + vy * cos_d + od_y
-        goal_yaw = math.atan2(
-            math.sin(self.start_yaw + delta),
-            math.cos(self.start_yaw + delta),
-        )
-
-        rospy.loginfo(
-            "[reset] Transform: OT=(%.2f,%.2f,%.0f°) Odom=(%.2f,%.2f,%.0f°) "
-            "Δ=%.0f° → Goal_odom=(%.2f,%.2f,%.0f°)",
-            ot_x, ot_y, math.degrees(ot_yaw),
-            od_x, od_y, math.degrees(od_yaw),
-            math.degrees(delta),
-            goal_x, goal_y, math.degrees(goal_yaw),
-        )
-        return goal_x, goal_y, goal_yaw
-
-    # ── Navigation ────────────────────────────────────────────────────────
-
-    def _send_goal(self, x, y, yaw):
-        """Publish a move_base goal in odom frame."""
-        q = tft.quaternion_from_euler(0, 0, yaw)
-        goal_id = "reset_%s" % uuid.uuid4().hex[:8]
-        self._current_goal_id = goal_id
-        self._result_event.clear()
-        self._result_status = None
-
-        msg = MoveBaseActionGoal()
-        msg.header.stamp = rospy.Time.now()
-        msg.goal_id.stamp = rospy.Time(0)
-        msg.goal_id.id = goal_id
-        msg.goal.target_pose.header.frame_id = "odom"
-        msg.goal.target_pose.header.stamp = rospy.Time.now()
-        msg.goal.target_pose.pose.position.x = x
-        msg.goal.target_pose.pose.position.y = y
-        msg.goal.target_pose.pose.orientation = Quaternion(*q)
-
-        self._goal_pub.publish(msg)
-        rospy.loginfo(
-            "[reset] Goal sent: (%.2f, %.2f, yaw=%.0f°) in odom frame",
-            x, y, math.degrees(yaw),
-        )
-
-    def _wait_for_result(self, timeout):
-        """Wait for move_base result. Returns GoalStatus int."""
+    def _rotate_to(self, target_yaw, tolerance=None, timeout=20.0):
+        """Spin to target_yaw using angular PID. Returns True on success."""
+        if tolerance is None:
+            tolerance = self.yaw_tolerance
+        self._ang_pid.reset()
+        rate = rospy.Rate(self.CTRL_HZ)
         deadline = time.time() + timeout
-        while not self._result_event.is_set() and time.time() < deadline:
-            if rospy.is_shutdown():
-                self._cancel_goal()
-                return GoalStatus.LOST
-            self._result_event.wait(0.5)
 
-        if self._result_event.is_set():
-            return self._result_status
+        while not rospy.is_shutdown() and time.time() < deadline:
+            pose = self._pose()
+            if pose is None:
+                rospy.logwarn("[reset] OptiTrack lost during rotation")
+                self._stop()
+                return False
 
-        rospy.logwarn("[reset] Navigation timed out (%.0fs)", timeout)
-        self._cancel_goal()
-        return GoalStatus.ABORTED
+            err = self._yaw_err(target_yaw, pose[2])
+            if abs(err) <= tolerance:
+                self._stop()
+                return True
 
-    def _cancel_goal(self):
-        if self._current_goal_id:
-            cancel_msg = GoalID()
-            cancel_msg.id = self._current_goal_id
-            self._cancel_pub.publish(cancel_msg)
+            cmd = Twist()
+            cmd.angular.z = self._ang_pid.compute(err)
+            self._cmd_vel_pub.publish(cmd)
+            rate.sleep()
 
-    # ── Error checking ────────────────────────────────────────────────────
+        self._stop()
+        rospy.logwarn("[reset] Rotation timed out (target=%.1f deg)", math.degrees(target_yaw))
+        return False
 
-    def _check_at_start(self, optitrack_msg):
-        """Return (pos_error, yaw_error) relative to start in OptiTrack frame."""
-        x, y, yaw = self._pose_msg_to_xyyaw(optitrack_msg)
-        pos_error = math.sqrt((x - self.start_x) ** 2 + (y - self.start_y) ** 2)
-        yaw_error = abs(
-            math.atan2(
-                math.sin(yaw - self.start_yaw),
-                math.cos(yaw - self.start_yaw),
+    # ── Phase 2: drive to position ─────────────────────────────────────────
+
+    def _drive_to(self, tx, ty):
+        """Drive to (tx, ty) with PID + range safety. Returns True on success."""
+        self._lin_pid.reset()
+        self._ang_pid.reset()
+        rate = rospy.Rate(self.CTRL_HZ)
+        deadline = time.time() + self.nav_timeout
+
+        while not rospy.is_shutdown() and time.time() < deadline:
+            pose = self._pose()
+            if pose is None:
+                rospy.logwarn("[reset] OptiTrack lost during drive")
+                self._stop()
+                return False
+
+            x, y, yaw = pose
+            dx, dy = tx - x, ty - y
+            dist = math.hypot(dx, dy)
+
+            if dist <= self.pos_tolerance:
+                self._stop()
+                return True
+
+            target_heading = math.atan2(dy, dx)
+            heading_err = self._yaw_err(target_heading, yaw)
+
+            # cos factor: reduce linear vel when heading is off
+            heading_factor = max(0.0, math.cos(heading_err))
+            # range safety: scale down when obstacle ahead
+            range_scale = self._forward_scale()
+
+            lin_vel = self._lin_pid.compute(dist) * heading_factor * range_scale
+            ang_vel = self._ang_pid.compute(heading_err)
+
+            if range_scale < 1.0:
+                rospy.logwarn_throttle(
+                    1.0, "[reset] Front obstacle: scale=%.2f", range_scale,
+                )
+
+            cmd = Twist()
+            cmd.linear.x = lin_vel
+            cmd.angular.z = ang_vel
+            self._cmd_vel_pub.publish(cmd)
+
+            self._pub_status(
+                "navigating",
+                pos_error=round(dist, 3),
+                yaw_error=round(abs(self._yaw_err(self.start_yaw, yaw)), 3),
             )
-        )
-        return pos_error, yaw_error
+            rate.sleep()
 
-    def _get_fresh_optitrack(self, timeout=5.0):
-        """Wait for a fresh OptiTrack reading. Returns PoseStamped or None."""
-        self._optitrack_event.clear()
-        if not self._optitrack_event.wait(timeout=timeout):
-            return None
-        with self._optitrack_lock:
-            return self._optitrack_pose
+        self._stop()
+        rospy.logwarn("[reset] Drive timed out")
+        return False
 
-    # ── Main algorithm ────────────────────────────────────────────────────
+    # ── Main ───────────────────────────────────────────────────────────────
 
     def run(self):
         """Iterative reset-to-start. Returns True on success."""
 
         # 1. Wait for OptiTrack
-        self._publish_status("waiting_for_optitrack")
+        self._pub_status("waiting_for_optitrack")
         rospy.loginfo("[reset] Waiting for OptiTrack on /optitrack/rosbot/pose ...")
-        if not self._optitrack_event.wait(timeout=30.0):
-            self._publish_status("error", error="OptiTrack pose timeout (30s)")
+        if not self._ot_event.wait(timeout=30.0):
+            self._pub_status("error", error="OptiTrack timeout (30s)")
             return False
 
-        # 2. Wait for TF odom → base_link
-        self._publish_status("waiting_for_tf")
-        rospy.loginfo("[reset] Waiting for TF odom → base_link ...")
-        try:
-            self.tf_listener.waitForTransform(
-                "odom", "base_link", rospy.Time(0), rospy.Duration(30.0),
-            )
-        except tf.Exception:
-            self._publish_status("error", error="TF odom→base_link timeout (30s)")
-            return False
+        # 2. Already at start?
+        pose = self._pose()
+        x, y, yaw = pose
+        pos_err = math.hypot(x - self.start_x, y - self.start_y)
+        yaw_err = abs(self._yaw_err(self.start_yaw, yaw))
+        rospy.loginfo("[reset] Initial error: pos=%.3fm yaw=%.2frad", pos_err, yaw_err)
 
-        # 3. Wait for move_base
-        self._publish_status("waiting_for_move_base")
-        rospy.loginfo("[reset] Waiting for move_base ...")
-        deadline = time.time() + 30.0
-        while not self._server_up.is_set() and time.time() < deadline:
-            if rospy.is_shutdown():
-                return False
-            self._server_up.wait(1.0)
-        if not self._server_up.is_set():
-            self._publish_status("error", error="move_base not available (30s)")
-            return False
-
-        # 4. Check if already at start
-        with self._optitrack_lock:
-            ot_pose = self._optitrack_pose
-        pos_err, yaw_err = self._check_at_start(ot_pose)
-        rospy.loginfo(
-            "[reset] Initial error: pos=%.3fm yaw=%.2f rad", pos_err, yaw_err,
-        )
         if pos_err <= self.pos_tolerance and yaw_err <= self.yaw_tolerance:
-            self._publish_status(
-                "success", pos_error=round(pos_err, 3), yaw_error=round(yaw_err, 3),
-            )
+            self._pub_status("success",
+                             pos_error=round(pos_err, 3),
+                             yaw_error=round(yaw_err, 3))
             return True
 
-        # 5. Iterative correction loop
+        # 3. Iterative correction
         for attempt in range(1, self.max_corrections + 1):
             if rospy.is_shutdown():
                 return False
 
-            self._publish_status(
-                "navigating",
-                attempt=attempt,
-                max_attempts=self.max_corrections,
-                pos_error=round(pos_err, 3),
-                yaw_error=round(yaw_err, 3),
-            )
-
-            # 5a. Fresh OptiTrack reading
-            ot_pose = self._get_fresh_optitrack(timeout=5.0)
-            if ot_pose is None:
-                self._publish_status(
-                    "error", error="OptiTrack stale", attempt=attempt,
-                )
+            pose = self._pose()
+            if pose is None:
+                self._pub_status("error", error="OptiTrack lost")
                 return False
+            x, y, yaw = pose
+            pos_err = math.hypot(x - self.start_x, y - self.start_y)
 
-            # 5b. Compute start in odom frame
-            start_odom = self._compute_start_in_odom(ot_pose)
-            if start_odom is None:
-                self._publish_status(
-                    "error", error="TF lookup failed", attempt=attempt,
-                )
+            self._pub_status("navigating",
+                             attempt=attempt,
+                             max_attempts=self.max_corrections,
+                             pos_error=round(pos_err, 3),
+                             yaw_error=round(abs(self._yaw_err(self.start_yaw, yaw)), 3))
+            rospy.loginfo("[reset] Attempt %d/%d  pos_err=%.3fm",
+                          attempt, self.max_corrections, pos_err)
+
+            # Phase 1: face the target
+            heading = math.atan2(self.start_y - y, self.start_x - x)
+            rospy.loginfo("[reset]  → rotate to heading %.1f°", math.degrees(heading))
+            self._rotate_to(heading, tolerance=0.12)
+
+            # Phase 2: drive there
+            rospy.loginfo("[reset]  → drive to (%.2f, %.2f)", self.start_x, self.start_y)
+            self._drive_to(self.start_x, self.start_y)
+
+            # Phase 3: align to final yaw
+            rospy.loginfo("[reset]  → align to yaw %.1f°", math.degrees(self.start_yaw))
+            self._rotate_to(self.start_yaw)
+
+            # Check result with fresh OptiTrack reading
+            pose = self._fresh_pose(timeout=5.0)
+            if pose is None:
+                self._pub_status("error", error="OptiTrack stale after nav")
                 return False
-
-            # 5c. Navigate
-            self._send_goal(*start_odom)
-            self._navigating = True
-            status = self._wait_for_result(self.nav_timeout)
-            self._navigating = False
-
-            if status == GoalStatus.SUCCEEDED:
-                rospy.loginfo("[reset] move_base succeeded on attempt %d", attempt)
-            else:
-                rospy.logwarn(
-                    "[reset] move_base status=%d on attempt %d (continuing)",
-                    status, attempt,
-                )
-
-            # 5d. Settle
-            rospy.sleep(1.0)
-
-            # 5e. Check OptiTrack
-            ot_pose = self._get_fresh_optitrack(timeout=5.0)
-            if ot_pose is None:
-                self._publish_status(
-                    "error", error="OptiTrack stale after nav", attempt=attempt,
-                )
-                return False
-
-            pos_err, yaw_err = self._check_at_start(ot_pose)
-            rospy.loginfo(
-                "[reset] Attempt %d: pos_err=%.3fm yaw_err=%.2f rad",
-                attempt, pos_err, yaw_err,
-            )
+            x, y, yaw = pose
+            pos_err = math.hypot(x - self.start_x, y - self.start_y)
+            yaw_err = abs(self._yaw_err(self.start_yaw, yaw))
+            rospy.loginfo("[reset] Attempt %d: pos=%.3fm yaw=%.2frad", attempt, pos_err, yaw_err)
 
             if pos_err <= self.pos_tolerance and yaw_err <= self.yaw_tolerance:
-                self._publish_status(
-                    "success",
-                    attempt=attempt,
-                    pos_error=round(pos_err, 3),
-                    yaw_error=round(yaw_err, 3),
-                )
+                self._pub_status("success",
+                                 attempt=attempt,
+                                 pos_error=round(pos_err, 3),
+                                 yaw_error=round(yaw_err, 3))
                 rospy.loginfo("[reset] SUCCESS after %d attempt(s)", attempt)
                 return True
 
-        # Exhausted all attempts
-        self._publish_status(
-            "failed",
-            pos_error=round(pos_err, 3),
-            yaw_error=round(yaw_err, 3),
-            attempts_used=self.max_corrections,
-        )
-        rospy.logwarn(
-            "[reset] FAILED after %d attempts (pos=%.3f yaw=%.2f)",
-            self.max_corrections, pos_err, yaw_err,
-        )
+        self._pub_status("failed",
+                         pos_error=round(pos_err, 3),
+                         yaw_error=round(yaw_err, 3),
+                         attempts_used=self.max_corrections)
+        rospy.logwarn("[reset] FAILED after %d attempts (pos=%.3fm yaw=%.2frad)",
+                      self.max_corrections, pos_err, yaw_err)
         return False
 
 
@@ -411,7 +357,6 @@ def main():
     rospy.init_node("reset_to_start")
     node = ResetToStart()
     success = node.run()
-    # Node exits — roslaunch detects this, ros_bridge sets state to "exited"
     if success:
         rospy.loginfo("[reset] Exiting with success")
     else:
