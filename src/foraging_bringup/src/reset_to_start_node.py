@@ -1,17 +1,17 @@
 #!/usr/bin/env python3
-"""Navigate the ROSbot back to its starting position using OptiTrack.
+"""Drive the ROSbot to a target pose using OptiTrack.
 
 Direct-drive PID control in OptiTrack frame — no move_base, no odom/TF.
 IR range sensors (fl/fr/rl/rr) provide front-obstacle safety.
 
-Three-phase per attempt:
-  1. Rotate in place to face the start position
-  2. Drive to start position (linear + heading PID, range safety)
+Three-phase:
+  1. Rotate in place to face the goal position
+  2. Drive to goal position (linear + heading PD, range safety)
   3. Rotate in place to final yaw
 
 Launched via:
     roslaunch foraging_bringup reset_to_start.launch \
-        start_x:=1.5 start_y:=2.0 start_yaw:=0.78
+        goal_x:=1.5 goal_y:=2.0 goal_yaw:=0.78
 """
 
 import json
@@ -54,7 +54,7 @@ class PID:
 
 
 class ResetToStart:
-    """OptiTrack-guided direct-drive reset with IR range-sensor safety."""
+    """OptiTrack-guided direct-drive go-to-pose with IR range-sensor safety."""
 
     # IR sensor safety (valid readings are 0.03–0.90 m; <0 means no obstacle)
     FRONT_STOP_M = 0.10   # stop forward motion if obstacle within 10 cm
@@ -64,19 +64,20 @@ class ResetToStart:
 
     def __init__(self):
         # ── Parameters ────────────────────────────────────────────────────
-        self.start_x         = rospy.get_param("~start_x",         0.0)
-        self.start_y         = rospy.get_param("~start_y",         0.0)
-        self.start_yaw       = rospy.get_param("~start_yaw",       0.0)
+        # New parameter names (preferred)
+        self.goal_x   = rospy.get_param("~goal_x",   0)
+        self.goal_y   = rospy.get_param("~goal_y",   0)
+        self.goal_yaw = rospy.get_param("~goal_yaw", 0)
+
         self.pos_tolerance   = rospy.get_param("~pos_tolerance",   0.10)
         self.yaw_tolerance   = rospy.get_param("~yaw_tolerance",   0.15)
-        self.max_corrections = int(rospy.get_param("~max_corrections", 5))
         self.nav_timeout     = rospy.get_param("~nav_timeout",     60.0)
         self.max_linear_vel  = rospy.get_param("~max_linear_vel",  0.20)
         self.max_angular_vel = rospy.get_param("~max_angular_vel", 0.60)
 
         rospy.loginfo(
-            "[reset] Start: x=%.3f y=%.3f yaw=%.1f deg  tol=%.2fm/%.2frad",
-            self.start_x, self.start_y, math.degrees(self.start_yaw),
+            "[reset] Goal: x=%.3f y=%.3f yaw=%.1f deg  tol=%.2fm/%.2frad",
+            self.goal_x, self.goal_y, math.degrees(self.goal_yaw),
             self.pos_tolerance, self.yaw_tolerance,
         )
 
@@ -260,7 +261,7 @@ class ResetToStart:
             self._pub_status(
                 "navigating",
                 pos_error=round(dist, 3),
-                yaw_error=round(abs(self._yaw_err(self.start_yaw, yaw)), 3),
+                yaw_error=round(abs(self._yaw_err(self.goal_yaw, yaw)), 3),
             )
             rate.sleep()
 
@@ -271,7 +272,7 @@ class ResetToStart:
     # ── Main ───────────────────────────────────────────────────────────────
 
     def run(self):
-        """Iterative reset-to-start. Returns True on success."""
+        """Single-shot go-to-goal. Returns True on success."""
 
         # 1. Wait for OptiTrack
         self._pub_status("waiting_for_optitrack")
@@ -283,8 +284,8 @@ class ResetToStart:
         # 2. Already at start?
         pose = self._pose()
         x, y, yaw = pose
-        pos_err = math.hypot(x - self.start_x, y - self.start_y)
-        yaw_err = abs(self._yaw_err(self.start_yaw, yaw))
+        pos_err = math.hypot(x - self.goal_x, y - self.goal_y)
+        yaw_err = abs(self._yaw_err(self.goal_yaw, yaw))
         rospy.loginfo("[reset] Initial error: pos=%.3fm yaw=%.2frad", pos_err, yaw_err)
 
         if pos_err <= self.pos_tolerance and yaw_err <= self.yaw_tolerance:
@@ -293,63 +294,50 @@ class ResetToStart:
                              yaw_error=round(yaw_err, 3))
             return True
 
-        # 3. Iterative correction
-        for attempt in range(1, self.max_corrections + 1):
-            if rospy.is_shutdown():
-                return False
+        # 3. One shot: rotate → drive → align
+        if rospy.is_shutdown():
+            return False
 
-            pose = self._pose()
-            if pose is None:
-                self._pub_status("error", error="OptiTrack lost")
-                return False
-            x, y, yaw = pose
-            pos_err = math.hypot(x - self.start_x, y - self.start_y)
+        # Phase 1: face the goal position
+        heading = math.atan2(self.goal_y - y, self.goal_x - x)
+        rospy.loginfo("[reset]  → rotate to heading %.1f°", math.degrees(heading))
+        if not self._rotate_to(heading, tolerance=0.12):
+            self._pub_status("failed", error="rotation_to_heading_failed")
+            return False
 
-            self._pub_status("navigating",
-                             attempt=attempt,
-                             max_attempts=self.max_corrections,
+        # Phase 2: drive there
+        rospy.loginfo("[reset]  → drive to (%.2f, %.2f)", self.goal_x, self.goal_y)
+        if not self._drive_to(self.goal_x, self.goal_y):
+            self._pub_status("failed", error="drive_failed")
+            return False
+
+        # Phase 3: align to final yaw
+        rospy.loginfo("[reset]  → align to yaw %.1f°", math.degrees(self.goal_yaw))
+        if not self._rotate_to(self.goal_yaw):
+            self._pub_status("failed", error="final_yaw_alignment_failed")
+            return False
+
+        # Check result with fresh OptiTrack reading
+        pose = self._fresh_pose(timeout=5.0)
+        if pose is None:
+            self._pub_status("error", error="OptiTrack stale after nav")
+            return False
+        x, y, yaw = pose
+        pos_err = math.hypot(x - self.goal_x, y - self.goal_y)
+        yaw_err = abs(self._yaw_err(self.goal_yaw, yaw))
+        rospy.loginfo("[reset] Final error: pos=%.3fm yaw=%.2frad", pos_err, yaw_err)
+
+        if pos_err <= self.pos_tolerance and yaw_err <= self.yaw_tolerance:
+            self._pub_status("success",
                              pos_error=round(pos_err, 3),
-                             yaw_error=round(abs(self._yaw_err(self.start_yaw, yaw)), 3))
-            rospy.loginfo("[reset] Attempt %d/%d  pos_err=%.3fm",
-                          attempt, self.max_corrections, pos_err)
-
-            # Phase 1: face the target
-            heading = math.atan2(self.start_y - y, self.start_x - x)
-            rospy.loginfo("[reset]  → rotate to heading %.1f°", math.degrees(heading))
-            self._rotate_to(heading, tolerance=0.12)
-
-            # Phase 2: drive there
-            rospy.loginfo("[reset]  → drive to (%.2f, %.2f)", self.start_x, self.start_y)
-            self._drive_to(self.start_x, self.start_y)
-
-            # Phase 3: align to final yaw
-            rospy.loginfo("[reset]  → align to yaw %.1f°", math.degrees(self.start_yaw))
-            self._rotate_to(self.start_yaw)
-
-            # Check result with fresh OptiTrack reading
-            pose = self._fresh_pose(timeout=5.0)
-            if pose is None:
-                self._pub_status("error", error="OptiTrack stale after nav")
-                return False
-            x, y, yaw = pose
-            pos_err = math.hypot(x - self.start_x, y - self.start_y)
-            yaw_err = abs(self._yaw_err(self.start_yaw, yaw))
-            rospy.loginfo("[reset] Attempt %d: pos=%.3fm yaw=%.2frad", attempt, pos_err, yaw_err)
-
-            if pos_err <= self.pos_tolerance and yaw_err <= self.yaw_tolerance:
-                self._pub_status("success",
-                                 attempt=attempt,
-                                 pos_error=round(pos_err, 3),
-                                 yaw_error=round(yaw_err, 3))
-                rospy.loginfo("[reset] SUCCESS after %d attempt(s)", attempt)
-                return True
+                             yaw_error=round(yaw_err, 3))
+            rospy.loginfo("[reset] SUCCESS")
+            return True
 
         self._pub_status("failed",
                          pos_error=round(pos_err, 3),
-                         yaw_error=round(yaw_err, 3),
-                         attempts_used=self.max_corrections)
-        rospy.logwarn("[reset] FAILED after %d attempts (pos=%.3fm yaw=%.2frad)",
-                      self.max_corrections, pos_err, yaw_err)
+                         yaw_error=round(yaw_err, 3))
+        rospy.logwarn("[reset] FAILED (pos=%.3fm yaw=%.2frad)", pos_err, yaw_err)
         return False
 
 

@@ -1,15 +1,12 @@
 <launch>
-    <!-- Start pose in OptiTrack frame -->
-    <arg name="start_x"          default="0.0"/>
-    <arg name="start_y"          default="0.0"/>
-    <arg name="start_yaw"        default="0.0"/>
+    <!-- Goal pose in OptiTrack frame -->
+    <arg name="goal_x"          default="2.9814417362213135"/>
+    <arg name="goal_y"          default="1.8312262296676636"/>
+    <arg name="goal_yaw"        default="-0.457913"/>
 
     <!-- Tolerances for declaring success -->
     <arg name="pos_tolerance"    default="0.10"/>
     <arg name="yaw_tolerance"    default="0.15"/>
-
-    <!-- Max correction attempts -->
-    <arg name="max_corrections"  default="5"/>
 
     <!-- Per-attempt timeout (seconds) -->
     <arg name="nav_timeout"      default="60.0"/>
@@ -20,12 +17,11 @@
 
     <!-- Direct-drive reset node (no move_base needed) -->
     <node name="reset_to_start" pkg="foraging_bringup" type="reset_to_start_node.py" output="screen">
-        <param name="start_x"          value="$(arg start_x)"/>
-        <param name="start_y"          value="$(arg start_y)"/>
-        <param name="start_yaw"        value="$(arg start_yaw)"/>
+        <param name="goal_x"          value="$(arg goal_x)"/>
+        <param name="goal_y"          value="$(arg goal_y)"/>
+        <param name="goal_yaw"        value="$(arg goal_yaw)"/>
         <param name="pos_tolerance"    value="$(arg pos_tolerance)"/>
         <param name="yaw_tolerance"    value="$(arg yaw_tolerance)"/>
-        <param name="max_corrections"  value="$(arg max_corrections)"/>
         <param name="nav_timeout"      value="$(arg nav_timeout)"/>
         <param name="max_linear_vel"   value="$(arg max_linear_vel)"/>
         <param name="max_angular_vel"  value="$(arg max_angular_vel)"/>
