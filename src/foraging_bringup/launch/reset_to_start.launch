@@ -12,8 +12,8 @@
     <arg name="nav_timeout"      default="60.0"/>
 
     <!-- Velocity limits -->
-    <arg name="max_linear_vel"   default="0.20"/>
-    <arg name="max_angular_vel"  default="0.60"/>
+    <arg name="max_linear_vel"   default="0.15"/>
+    <arg name="max_angular_vel"  default="0.50"/>
 
     <!-- Direct-drive reset node (no move_base needed) -->
     <node name="reset_to_start" pkg="foraging_bringup" type="reset_to_start_node.py" output="screen">

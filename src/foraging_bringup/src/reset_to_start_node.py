@@ -83,11 +83,11 @@ class ResetToStart:
 
         # ── PID controllers ────────────────────────────────────────────────
         self._lin_pid = PID(
-            kp=0.6, kd=0.08,
+            kp=0.4, kd=0.05,
             out_min=0.0, out_max=self.max_linear_vel,
         )
         self._ang_pid = PID(
-            kp=1.4, kd=0.10,
+            kp=1.0, kd=0.08,
             out_min=-self.max_angular_vel, out_max=self.max_angular_vel,
         )
 
@@ -244,8 +244,10 @@ class ResetToStart:
             heading_factor = max(0.0, math.cos(heading_err))
             # range safety: scale down when obstacle ahead
             range_scale = self._forward_scale()
+            # decel ramp: cap speed proportional to distance so robot creeps to stop
+            decel_cap = min(self.max_linear_vel, dist * 0.5)
 
-            lin_vel = self._lin_pid.compute(dist) * heading_factor * range_scale
+            lin_vel = min(self._lin_pid.compute(dist), decel_cap) * heading_factor * range_scale
             ang_vel = self._ang_pid.compute(heading_err)
 
             if range_scale < 1.0:
