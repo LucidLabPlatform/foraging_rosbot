@@ -58,6 +58,8 @@ add_message_files(
   ArucoDetected.msg
   ArucoRegistry.msg
   ResetStatus.msg
+  ForagingStatus.msg
+  ForagingResults.msg
 )
 
 ## Generate services in the 'srv' folder

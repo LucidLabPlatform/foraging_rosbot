@@ -12,7 +12,7 @@ import threading
 import rospkg
 from std_msgs.msg import String
 from geometry_msgs.msg import Twist
-from foraging_msgs.msg import PuckRegistry, ArucoRegistry
+from foraging_msgs.msg import PuckRegistry, ArucoRegistry, ForagingStatus, ForagingResults
 from foraging_msgs.srv import (RandomWalkServerMessage, RandomWalkServerMessageRequest,
                                 CenterPuckServerMessage, CenterPuckServerMessageRequest,
                                 PickPuckServerMessage, PickPuckServerMessageRequest,
@@ -53,8 +53,8 @@ class TidyRoom:
         self._puck_selection     = rospy.get_param('~puck_selection', 'closest')
 
         self._start_time = None
-        self._status_pub  = rospy.Publisher('/foraging/status', String, queue_size=1, latch=True)
-        self._results_pub = rospy.Publisher('/foraging/results', String, queue_size=1, latch=True)
+        self._status_pub  = rospy.Publisher('/foraging/status', ForagingStatus, queue_size=1, latch=True)
+        self._results_pub = rospy.Publisher('/foraging/results', ForagingResults, queue_size=1, latch=True)
         self._registry_lock = threading.Lock()
 
         self._puck_registry = []     # list of PuckConfirmed
@@ -85,32 +85,30 @@ class TidyRoom:
     # -----------------------------------------------------------------------
 
     def _publish_status(self, state, mode=None, **extra):
-        msg = {"state": state}
-        if mode is not None:
-            msg["mode"] = mode
-        if self._start_time is not None:
-            msg["elapsed_s"] = round(time.time() - self._start_time, 1)
-        msg.update(extra)
-        self._status_pub.publish(json.dumps(msg))
+        msg = ForagingStatus()
+        msg.state = state
+        msg.mode = mode if mode is not None else -1
+        msg.elapsed_s = round(time.time() - self._start_time, 1) if self._start_time else 0.0
+        msg.pucks_placed = extra.get("pucks_placed", 0)
+        msg.duration_s = extra.get("duration_s", 0.0)
+        msg.error_msg = extra.get("error", "")
+        self._status_pub.publish(msg)
 
     def _publish_results(self):
         """Publish structured trial results to /foraging/results."""
         elapsed = round(time.time() - self._start_time, 1)
         with self._registry_lock:
             placed = sum(1 for p in self._puck_registry if p.status == 1)
-        results = {
-            "pucks_placed": placed,
-            "duration_s": elapsed,
-            "params": {
-                "site_fidelity_rate": self._site_fidelity_rate,
-                "explore_puck_pct": self.explore_puck_pct,
-                "explore_corner_pct": self.explore_corner_pct,
-                "puck_selection": self._puck_selection,
-                "num_pucks_expected": self.num_pucks_expected,
-            },
-            "puck_events": self._puck_events,
-        }
-        self._results_pub.publish(json.dumps(results))
+        msg = ForagingResults()
+        msg.pucks_placed = placed
+        msg.duration_s = elapsed
+        msg.site_fidelity_rate = self._site_fidelity_rate
+        msg.explore_puck_pct = self.explore_puck_pct
+        msg.explore_corner_pct = self.explore_corner_pct
+        msg.puck_selection = self._puck_selection
+        msg.num_pucks_expected = self.num_pucks_expected
+        msg.puck_events_json = json.dumps(self._puck_events)
+        self._results_pub.publish(msg)
         rospy.loginfo("Trial results: %d pucks placed in %.1fs", placed, elapsed)
 
     def run(self):
