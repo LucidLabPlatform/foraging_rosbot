@@ -46,10 +46,10 @@ NO_PUCK_FRAMES_BEFORE_SEARCH = 10            # consecutive no-detection frames b
 
 COLOR_NAMES = {0: "unknown", 1: "red", 2: "green", 3: "blue"}
 HSV_BOUNDS = {
-    "red":   [(np.array([  0, 105,   0]), np.array([ 15, 255, 255])),
-              (np.array([165, 105,   0]), np.array([180, 255, 255]))],
-    "green": [(np.array([ 35,  20,   0]), np.array([ 80, 255, 255]))],
-    "blue":  [(np.array([ 90, 160,   0]), np.array([130, 255, 255]))],
+    "red":   [(np.array([  0, 105,   10]), np.array([ 15, 255, 255])),
+              (np.array([165, 70,   0]), np.array([180, 255, 255]))],
+    "green": [(np.array([ 35,  40,   20]), np.array([ 80, 255, 255]))],
+    "blue":  [(np.array([ 90, 160,   0]), np.array([130, 250, 255]))],
 }
 KERNEL = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
 # ─────────────────────────────────────────────────────────────────────────────
