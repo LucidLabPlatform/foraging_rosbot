@@ -18,7 +18,7 @@ from foraging_msgs.msg import RawArucoDetected
 
 bridge = CvBridge()
 
-DEBUG_VISUALS = True
+DEBUG_VISUALS = False
 
 
 # ArUco dictionary — change to match the markers used in the arena
