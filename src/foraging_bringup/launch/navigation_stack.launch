@@ -1,5 +1,5 @@
 <launch>
-    <arg name="open_rviz"          default="true"/>
+    <arg name="open_rviz"          default="false"/>
     <arg name="puck_confirm_hits"  default="3"/>
     <arg name="puck_cluster_r"     default="0.3"/>
     <arg name="puck_stale_timeout" default="5.0"/>
