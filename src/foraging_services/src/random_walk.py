@@ -1,34 +1,39 @@
 #!/usr/bin/env python3
 """
-ROS service server that performs a random walk.
-Navigates the robot around the arena until target puck and ArUco corner counts are met,
-then returns done=True.
+ROS service server that performs deterministic, cell-based exploration.
+Navigates the robot around the arena until target puck and ArUco corner counts
+are met, then returns done=True.
 
-Each step:
-  1. Choose a random orientation
-  2. Rotate the robot in place to face that direction (cmd_vel)
-  3. Send a move_base goal one step ahead — if move_base can plan and reach it, we moved
-  4. If move_base returns ABORTED (no valid path), try a new random orientation
+Algorithm:
+  1. Overlay a cell_size_m grid on the world frame, anchored at the origin.
+  2. Track the cells the robot has entered (visited) via a 5 Hz pose timer.
+  3. On each step, pick the closest unvisited cell within Chebyshev radius R
+     whose center is FREE in the move_base global costmap and that
+     /move_base/make_plan can route to. Send a move_base goal at cell center.
+  4. If R is exhausted, expand up to search_radius_max_cells. If still no
+     candidate exists, clear _visited and continue (the robot keeps moving
+     until thresholds are met or the trial is cancelled externally).
+  5. On move_base failure for a candidate, ban that cell for
+     unreachable_cooldown_s seconds and try the next candidate.
+
+The service contract (RandomWalkServerMessage) is unchanged: caller specifies
+target puck and corner counts; service returns done=True the moment both
+thresholds are met.
 """
 
 import rospy
 import math
-import random
 import threading
 from foraging_msgs.msg import PuckRegistry, ArucoRegistry
 from foraging_msgs.srv import RandomWalkServerMessage, RandomWalkServerMessageResponse
-from geometry_msgs.msg import PoseStamped, Twist
+from geometry_msgs.msg import PoseStamped
 from nav_msgs.msg import OccupancyGrid
 from nav_msgs.srv import GetPlan, GetPlanRequest
 from move_base_client import MoveBaseClient
 
 # ── Parameters ────────────────────────────────────────────────────────────────
-STEP_SIZE_DEFAULT     = 0.5   # meters per step (overridable via ~step_size param)   # <-- Decrease for better random walk?
-STEP_TIMEOUT          = 15    # seconds — timeout for each move_base goal            # <-- Decrease for better random walk?
-MAX_ORIENTATION_TRIES = 4     # max attempts to find a free direction per step       # <-- Decrease for better random walk?
-ANGULAR_SPEED         = 0.6   # rad/s for in-place rotation
-YAW_TOLERANCE         = 0.1   # rad — acceptable error when rotating to target yaw
-ROTATE_TIMEOUT        = 10.0   # seconds — max time to complete an in-place rotation
+STEP_SIZE_DEFAULT     = 0.5   # meters per step (legacy ~step_size; aliased to ~cell_size_m)
+STEP_TIMEOUT          = 15    # seconds — timeout for each move_base goal
 PAUSE_AFTER_STEP      = 2.5   # seconds to pause after each step to allow puck detection
 
 # ── Cell-based explorer parameters ───────────────────────────────────────────
@@ -50,16 +55,10 @@ class RandomWalkServer:
         self._corner_count: int = 0
         self._count_lock = threading.Lock()
 
-        # Correlated random walk: when walk_sigma > 0, successive turn angles
-        # are drawn from N(previous_heading, sigma) instead of uniform.
-        # This produces a CPFA-style correlated random walk (CRW).
-        self._walk_sigma = rospy.get_param('~walk_sigma', 0.0)
-        self._step_size = rospy.get_param('~step_size', STEP_SIZE_DEFAULT)
-        self._last_heading = None
-
-        # Cell-based explorer state. ~cell_size_m falls back to ~step_size for
-        # backward compatibility with launch files that haven't migrated yet.
-        self._cell_size_m = float(rospy.get_param('~cell_size_m', self._step_size))
+        # ~cell_size_m falls back to ~step_size for backward compatibility
+        # with launch files that haven't migrated to the new param name yet.
+        legacy_step_size = rospy.get_param('~step_size', STEP_SIZE_DEFAULT)
+        self._cell_size_m = float(rospy.get_param('~cell_size_m', legacy_step_size))
         self._search_radius_cells = int(rospy.get_param(
             '~search_radius_cells', SEARCH_RADIUS_CELLS_DEFAULT))
         self._search_radius_max_cells = int(rospy.get_param(
@@ -90,9 +89,6 @@ class RandomWalkServer:
         rospy.Subscriber("/aruco/registry", ArucoRegistry, self._aruco_registry_cb, queue_size=1)
         rospy.Subscriber("/move_base/global_costmap/costmap", OccupancyGrid,
                          self._costmap_cb, queue_size=1)
-
-        # cmd_vel publisher (for in-place rotation)
-        self._cmd_vel = rospy.Publisher("/cmd_vel", Twist, queue_size=1)
 
         # Navigation client (handles TF + move_base connection)
         self._nav = MoveBaseClient()
@@ -219,9 +215,9 @@ class RandomWalkServer:
             self._unreachable[cell] = until
 
     def _can_plan_to(self, goal_x: float, goal_y: float) -> bool:
-        """Lightweight reachability pre-check via /move_base/make_plan, without
-        the cancel+sleep dance _is_goal_reachable does (the explorer only calls
-        this between goals, so no in-flight goal needs cancelling)."""
+        """Lightweight reachability pre-check via /move_base/make_plan. The
+        explorer only calls this between goals, so there's no in-flight goal
+        to cancel before asking the planner."""
         try:
             pose = self._nav.get_robot_pose()
         except Exception:
@@ -313,87 +309,14 @@ class RandomWalkServer:
 
         return None
 
-    def _rotate_to_yaw(self, target_yaw: float) -> bool:
-        """Rotate in place to face target_yaw (world frame) using cmd_vel. Returns True on success."""
-        rate = rospy.Rate(20)
-        deadline = rospy.Time.now() + rospy.Duration(ROTATE_TIMEOUT)
-        twist = Twist()
-
-        while not rospy.is_shutdown():
-            if rospy.Time.now() > deadline:
-                twist.angular.z = 0.0
-                self._cmd_vel.publish(twist)
-                rospy.logwarn("rotate_to_yaw timed out")
-                return False
-
-            pose = self._nav.get_robot_pose()
-            if pose is None:
-                rate.sleep()
-                continue
-
-            _, _, current_yaw = pose
-            error = math.atan2(math.sin(target_yaw - current_yaw),
-                               math.cos(target_yaw - current_yaw))
-
-            if abs(error) < YAW_TOLERANCE:
-                twist.angular.z = 0.0
-                self._cmd_vel.publish(twist)
-                return True
-
-            twist.angular.z = ANGULAR_SPEED if error > 0 else -ANGULAR_SPEED
-            self._cmd_vel.publish(twist)
-            rate.sleep()
-
-        twist.angular.z = 0.0
-        self._cmd_vel.publish(twist)
-        return False
-
-    def _is_goal_reachable(self, goal_x, goal_y):
-        """Pre-check goal reachability via make_plan before rotating toward it."""
-        self._nav.cancel()
-        rospy.sleep(0.5)
-        try:
-            pose = self._nav.get_robot_pose()
-            if pose is None:
-                return True  # can't check, assume reachable
-
-            start = PoseStamped()
-            start.header.frame_id = "map"
-            start.header.stamp = rospy.Time.now()
-            start.pose.position.x = pose[0]
-            start.pose.position.y = pose[1]
-            start.pose.orientation.w = 1.0
-
-            goal = PoseStamped()
-            goal.header.frame_id = "map"
-            goal.header.stamp = rospy.Time.now()
-            goal.pose.position.x = goal_x
-            goal.pose.position.y = goal_y
-            goal.pose.orientation.w = 1.0
-
-            req = GetPlanRequest()
-            req.start = start
-            req.goal = goal
-            req.tolerance = 0.25  # matches xy_goal_tolerance
-
-            resp = self._make_plan(req)
-            reachable = len(resp.plan.poses) > 0
-            if not reachable:
-                rospy.logdebug("[walk] make_plan: goal (%.2f, %.2f) unreachable — skipping",
-                               goal_x, goal_y)
-            return reachable
-        except rospy.ServiceException as e:
-            rospy.logwarn("[walk] make_plan service error: %s — assuming reachable", e)
-            return True  # fail open so walk doesn't stall
-
     # ── Service handler ───────────────────────────────────────────────────────
 
     def handle_random_walk(self, req: RandomWalkServerMessage) -> RandomWalkServerMessageResponse:
         num_pucks = req.num_pucks_to_find
         num_corners = req.num_corners_to_find
-
         rospy.loginfo(
-            f"Random walk requested — target pucks={num_pucks}, target corners={num_corners}"
+            "[explorer] requested: target pucks=%d, target corners=%d",
+            num_pucks, num_corners,
         )
 
         # 1. Already at threshold?
@@ -401,130 +324,81 @@ class RandomWalkServer:
             puck_count = self._puck_count
             corner_count = self._corner_count
         if puck_count >= num_pucks and corner_count >= num_corners:
-            rospy.loginfo("Thresholds already met — returning done=True immediately.")
+            rospy.loginfo("[explorer] thresholds already met — done")
             return RandomWalkServerMessageResponse(done=True)
 
-        step = 0
+        # 2. Wait for the costmap. Without it, _is_free returns False for
+        #    every cell and we'd loop forever rejecting candidates.
+        if not self._wait_for_costmap(self._costmap_wait_timeout_s):
+            rospy.logwarn(
+                "[explorer] no costmap after %.1fs — aborting (done=False)",
+                self._costmap_wait_timeout_s,
+            )
+            return RandomWalkServerMessageResponse(done=False)
 
+        step = 0
         while not rospy.is_shutdown():
-            # Check thresholds
+            # Check thresholds.
             with self._count_lock:
                 puck_count = self._puck_count
                 corner_count = self._corner_count
             if puck_count >= num_pucks and corner_count >= num_corners:
                 rospy.loginfo(
-                    f"Thresholds met — pucks={puck_count}/{num_pucks}, "
-                    f"corners={corner_count}/{num_corners}. Done."
+                    "[explorer] thresholds met — pucks=%d/%d, corners=%d/%d. Done.",
+                    puck_count, num_pucks, corner_count, num_corners,
                 )
                 return RandomWalkServerMessageResponse(done=True)
 
             step += 1
             if step % 5 == 0:
+                with self._visited_lock:
+                    n_visited = len(self._visited)
+                    n_banned = len(self._unreachable)
                 rospy.loginfo(
-                    f"Step {step} — pucks={puck_count}/{num_pucks}, "
-                    f"corners={corner_count}/{num_corners}"
+                    "[explorer] step %d — pucks=%d/%d, corners=%d/%d, visited=%d, banned=%d",
+                    step, puck_count, num_pucks, corner_count, num_corners,
+                    n_visited, n_banned,
                 )
 
-            pose = self._nav.get_robot_pose()
-            if pose is None:
-                rospy.sleep(0.5)
-                continue
-            robot_x, robot_y, robot_yaw = pose
-
-            # Try to find a free direction: random angle → rotate → let move_base check path
-            direction_found = False
-            # Spread attempts evenly across the circle with a random phase so successive
-            # failed steps don't keep retrying the same directions
-            sector_size = 2 * math.pi / MAX_ORIENTATION_TRIES
-            sector_offset = random.uniform(0, sector_size)
-            for attempt in range(MAX_ORIENTATION_TRIES):
-                # Early exit if thresholds met during step
-                with self._count_lock:
-                    if self._puck_count >= num_pucks and self._corner_count >= num_corners:
-                        rospy.loginfo(
-                            f"Thresholds met mid-step — pucks={self._puck_count}/{num_pucks}, "
-                            f"corners={self._corner_count}/{num_corners}. Done."
-                        )
-                        return RandomWalkServerMessageResponse(done=True)
-
-                if self._walk_sigma > 0 and self._last_heading is not None:
-                    delta = random.gauss(0, self._walk_sigma)
-                    world_angle = self._last_heading + delta
-                else:
-                    world_angle = robot_yaw + sector_offset + attempt * sector_size
-                goal_x = robot_x + self._step_size * math.cos(world_angle)
-                goal_y = robot_y + self._step_size * math.sin(world_angle)
-
-                # Pre-check goal reachability before rotating toward it
-                if not self._is_goal_reachable(goal_x, goal_y):
-                    continue
-
-                # Rotate robot to face this direction
-                if not self._rotate_to_yaw(world_angle):
-                    rospy.logdebug("Step %d attempt %d: rotation failed, trying new angle",
-                                   step, attempt + 1)
-                    continue
-
-                # Refresh pose after rotation
-                pose = self._nav.get_robot_pose()
-                if pose is not None:
-                    robot_x, robot_y, _ = pose
-                    goal_x = robot_x + self._step_size * math.cos(world_angle)
-                    goal_y = robot_y + self._step_size * math.sin(world_angle)
-
-                # Send goal — move_base returns ABORTED if no valid path can be planned
-                rospy.logdebug(
-                    f"Step {step} attempt {attempt + 1}: "
-                    f"angle={math.degrees(world_angle - robot_yaw):.1f}°, "
-                    f"goal=({goal_x:.2f}, {goal_y:.2f})"
+            result = self._pick_next_cell()
+            if result is None:
+                # All reachable cells exhausted within R_max. Per design, reset
+                # _visited and keep going; the explorer never returns done=False
+                # while the trial is alive — the orchestrator's wait timeout is
+                # the trial-level safety net.
+                with self._visited_lock:
+                    n_visited = len(self._visited)
+                    n_banned = len(self._unreachable)
+                    self._visited.clear()
+                    self._unreachable.clear()
+                rospy.loginfo(
+                    "[explorer] coverage exhausted (visited=%d, banned=%d) — "
+                    "clearing visited set and continuing",
+                    n_visited, n_banned,
                 )
-                success = self._nav.go_to(goal_x, goal_y, yaw=world_angle, timeout=STEP_TIMEOUT)
-                if success:
-                    direction_found = True
-                    self._last_heading = world_angle
-                    rospy.sleep(PAUSE_AFTER_STEP)
-                    break
-                else:
-                    rospy.logdebug(
-                        "Step %d attempt %d: move_base failed, trying new angle",
-                        step, attempt + 1
-                    )
-
-            if not direction_found:
-                # Fallback: try a shorter step (half size) with a fresh set of directions
-                short_step = self._step_size * 0.5
-                sector_size = 2 * math.pi / MAX_ORIENTATION_TRIES
-                sector_offset = random.uniform(0, sector_size)
-                for attempt in range(MAX_ORIENTATION_TRIES):
-                    if rospy.is_shutdown():
-                        break
-                    with self._count_lock:
-                        if self._puck_count >= num_pucks and self._corner_count >= num_corners:
-                            return RandomWalkServerMessageResponse(done=True)
-                    world_angle = robot_yaw + sector_offset + attempt * sector_size
-                    goal_x = robot_x + short_step * math.cos(world_angle)
-                    goal_y = robot_y + short_step * math.sin(world_angle)
-                    if not self._is_goal_reachable(goal_x, goal_y):
-                        continue
-                    if not self._rotate_to_yaw(world_angle):
-                        continue
-                    pose = self._nav.get_robot_pose()
-                    if pose is not None:
-                        robot_x, robot_y, _ = pose
-                        goal_x = robot_x + short_step * math.cos(world_angle)
-                        goal_y = robot_y + short_step * math.sin(world_angle)
-                    success = self._nav.go_to(goal_x, goal_y, yaw=world_angle, timeout=STEP_TIMEOUT)
-                    if success:
-                        direction_found = True
-                        self._last_heading = world_angle
-                        rospy.sleep(PAUSE_AFTER_STEP)
-                        break
-
-            if not direction_found:
-                rospy.logwarn("No valid direction found (full + short step) — waiting 1 s.")
                 rospy.sleep(1.0)
+                continue
 
-        # Shutdown before thresholds met
+            target_x, target_y, target_yaw, cell = result
+            rospy.loginfo(
+                "[explorer] step %d: target cell %s at (%.2f, %.2f), yaw=%.2f rad",
+                step, cell, target_x, target_y, target_yaw,
+            )
+            success = self._nav.go_to(target_x, target_y, yaw=target_yaw, timeout=STEP_TIMEOUT)
+            if success:
+                rospy.loginfo(
+                    "[explorer] reached cell %s — pausing %.1fs for perception",
+                    cell, PAUSE_AFTER_STEP,
+                )
+                rospy.sleep(PAUSE_AFTER_STEP)
+            else:
+                rospy.logwarn(
+                    "[explorer] move_base failed for cell %s — banning for %.0fs",
+                    cell, self._unreachable_cooldown_s,
+                )
+                self._mark_unreachable(cell)
+
+        # rospy shutdown before thresholds met.
         return RandomWalkServerMessageResponse(done=False)
 
 
