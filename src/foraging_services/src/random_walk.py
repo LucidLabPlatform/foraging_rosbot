@@ -18,6 +18,7 @@ import threading
 from foraging_msgs.msg import PuckRegistry, ArucoRegistry
 from foraging_msgs.srv import RandomWalkServerMessage, RandomWalkServerMessageResponse
 from geometry_msgs.msg import PoseStamped, Twist
+from nav_msgs.msg import OccupancyGrid
 from nav_msgs.srv import GetPlan, GetPlanRequest
 from move_base_client import MoveBaseClient
 
@@ -29,6 +30,18 @@ ANGULAR_SPEED         = 0.6   # rad/s for in-place rotation
 YAW_TOLERANCE         = 0.1   # rad — acceptable error when rotating to target yaw
 ROTATE_TIMEOUT        = 10.0   # seconds — max time to complete an in-place rotation
 PAUSE_AFTER_STEP      = 2.5   # seconds to pause after each step to allow puck detection
+
+# ── Cell-based explorer parameters ───────────────────────────────────────────
+# These drive the deterministic visited-grid explorer. The grid is anchored at
+# world origin (map frame). A cell is "free" when its center sits inside the
+# move_base global costmap with cost in [0, cost_free_threshold).
+CELL_SIZE_DEFAULT               = 0.5    # meters per grid cell side
+SEARCH_RADIUS_CELLS_DEFAULT     = 2      # initial Chebyshev radius around robot cell
+SEARCH_RADIUS_MAX_CELLS_DEFAULT = 8      # max R before _visited reset
+COST_FREE_THRESHOLD_DEFAULT     = 50     # costmap cost < this = free; >= = blocked
+COSTMAP_WAIT_TIMEOUT_S_DEFAULT  = 10.0   # seconds to wait for first costmap msg
+UNREACHABLE_COOLDOWN_S_DEFAULT  = 30.0   # seconds a failed cell stays banned
+POSE_TICK_HZ_DEFAULT            = 5.0    # visited-tracking timer rate
 
 
 class RandomWalkServer:
@@ -44,9 +57,32 @@ class RandomWalkServer:
         self._step_size = rospy.get_param('~step_size', STEP_SIZE_DEFAULT)
         self._last_heading = None
 
+        # Cell-based explorer state. ~cell_size_m falls back to ~step_size for
+        # backward compatibility with launch files that haven't migrated yet.
+        self._cell_size_m = float(rospy.get_param('~cell_size_m', self._step_size))
+        self._search_radius_cells = int(rospy.get_param(
+            '~search_radius_cells', SEARCH_RADIUS_CELLS_DEFAULT))
+        self._search_radius_max_cells = int(rospy.get_param(
+            '~search_radius_max_cells', SEARCH_RADIUS_MAX_CELLS_DEFAULT))
+        self._cost_free_threshold = int(rospy.get_param(
+            '~cost_free_threshold', COST_FREE_THRESHOLD_DEFAULT))
+        self._costmap_wait_timeout_s = float(rospy.get_param(
+            '~costmap_wait_timeout_s', COSTMAP_WAIT_TIMEOUT_S_DEFAULT))
+        self._unreachable_cooldown_s = float(rospy.get_param(
+            '~unreachable_cooldown_s', UNREACHABLE_COOLDOWN_S_DEFAULT))
+        self._pose_tick_hz = float(rospy.get_param(
+            '~pose_tick_hz', POSE_TICK_HZ_DEFAULT))
+
+        # Latest costmap snapshot. Updated by _costmap_cb on every publish from
+        # /move_base/global_costmap/costmap. None until the first message lands.
+        self._costmap: OccupancyGrid = None
+        self._costmap_lock = threading.Lock()
+
         # Subscribers
         rospy.Subscriber("/puck/registry", PuckRegistry, self._puck_registry_cb, queue_size=1)
         rospy.Subscriber("/aruco/registry", ArucoRegistry, self._aruco_registry_cb, queue_size=1)
+        rospy.Subscriber("/move_base/global_costmap/costmap", OccupancyGrid,
+                         self._costmap_cb, queue_size=1)
 
         # cmd_vel publisher (for in-place rotation)
         self._cmd_vel = rospy.Publisher("/cmd_vel", Twist, queue_size=1)
@@ -65,6 +101,14 @@ class RandomWalkServer:
         # Service server
         self._service = rospy.Service("random_walk", RandomWalkServerMessage, self.handle_random_walk)
         rospy.loginfo("Random walk service ready.")
+        rospy.loginfo(
+            "[explorer] config: cell_size_m=%.2f, search_radius_cells=%d (max=%d), "
+            "cost_free_threshold=%d, costmap_wait_timeout_s=%.1f, "
+            "unreachable_cooldown_s=%.1f, pose_tick_hz=%.1f",
+            self._cell_size_m, self._search_radius_cells, self._search_radius_max_cells,
+            self._cost_free_threshold, self._costmap_wait_timeout_s,
+            self._unreachable_cooldown_s, self._pose_tick_hz,
+        )
 
     # ── Callbacks ─────────────────────────────────────────────────────────────
 
@@ -76,7 +120,55 @@ class RandomWalkServer:
         with self._count_lock:
             self._corner_count = len(msg.markers)
 
+    def _costmap_cb(self, msg: OccupancyGrid) -> None:
+        with self._costmap_lock:
+            first = self._costmap is None
+            self._costmap = msg
+        if first:
+            rospy.loginfo(
+                "[explorer] First costmap received: %dx%d cells, resolution=%.3fm, "
+                "origin=(%.2f, %.2f)",
+                msg.info.width, msg.info.height, msg.info.resolution,
+                msg.info.origin.position.x, msg.info.origin.position.y,
+            )
+
     # ── Helpers ───────────────────────────────────────────────────────────────
+
+    def _is_free(self, world_x: float, world_y: float) -> bool:
+        """Return True iff (world_x, world_y) lies in the published costmap and
+        its cell value is in [0, cost_free_threshold). Unknown (-1) and
+        out-of-bounds points return False, so the explorer never tries to drive
+        into unmapped or occupied space.
+        """
+        with self._costmap_lock:
+            cm = self._costmap
+        if cm is None:
+            return False
+        res = cm.info.resolution
+        ox = cm.info.origin.position.x
+        oy = cm.info.origin.position.y
+        gx = int((world_x - ox) / res)
+        gy = int((world_y - oy) / res)
+        if not (0 <= gx < cm.info.width and 0 <= gy < cm.info.height):
+            return False
+        cost = cm.data[gy * cm.info.width + gx]
+        # OccupancyGrid stores -1 for unknown; cost values are int8 in [-1, 100]
+        # but the .data list usually surfaces them as Python ints already.
+        return 0 <= cost < self._cost_free_threshold
+
+    def _wait_for_costmap(self, timeout_s: float) -> bool:
+        """Block until the first costmap message arrives or timeout_s elapses.
+        Returns True if a costmap is available, False on timeout/shutdown.
+        """
+        deadline = rospy.Time.now() + rospy.Duration(timeout_s)
+        rate = rospy.Rate(10)
+        while not rospy.is_shutdown() and rospy.Time.now() < deadline:
+            with self._costmap_lock:
+                if self._costmap is not None:
+                    return True
+            rate.sleep()
+        with self._costmap_lock:
+            return self._costmap is not None
 
     def _rotate_to_yaw(self, target_yaw: float) -> bool:
         """Rotate in place to face target_yaw (world frame) using cmd_vel. Returns True on success."""
