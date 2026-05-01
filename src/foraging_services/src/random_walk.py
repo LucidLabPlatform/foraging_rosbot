@@ -78,6 +78,13 @@ class RandomWalkServer:
         self._costmap: OccupancyGrid = None
         self._costmap_lock = threading.Lock()
 
+        # Visited grid state. Cells the robot center has entered, by integer
+        # (i, j) coordinates. _unreachable maps cell -> wall-clock seconds at
+        # which the cell becomes eligible again after a move_base failure.
+        self._visited: set = set()
+        self._unreachable: dict = {}
+        self._visited_lock = threading.Lock()
+
         # Subscribers
         rospy.Subscriber("/puck/registry", PuckRegistry, self._puck_registry_cb, queue_size=1)
         rospy.Subscriber("/aruco/registry", ArucoRegistry, self._aruco_registry_cb, queue_size=1)
@@ -108,6 +115,13 @@ class RandomWalkServer:
             self._cell_size_m, self._search_radius_cells, self._search_radius_max_cells,
             self._cost_free_threshold, self._costmap_wait_timeout_s,
             self._unreachable_cooldown_s, self._pose_tick_hz,
+        )
+
+        # Visited-cell tracker — fires regardless of whether a service call is
+        # in flight, so transit cells get marked too.
+        self._pose_timer = rospy.Timer(
+            rospy.Duration(1.0 / max(self._pose_tick_hz, 0.1)),
+            self._pose_tick_cb,
         )
 
     # ── Callbacks ─────────────────────────────────────────────────────────────
@@ -169,6 +183,34 @@ class RandomWalkServer:
             rate.sleep()
         with self._costmap_lock:
             return self._costmap is not None
+
+    def _world_to_cell(self, world_x: float, world_y: float):
+        """Map a world-frame point to its integer grid cell. The grid is
+        anchored at the world origin and tiles space with squares of side
+        cell_size_m. Returns a (i, j) tuple."""
+        s = self._cell_size_m
+        return (int(math.floor(world_x / s)), int(math.floor(world_y / s)))
+
+    def _cell_to_world_center(self, cell):
+        """Inverse of _world_to_cell up to cell granularity. Returns the
+        center of cell (i, j) in world coordinates."""
+        s = self._cell_size_m
+        i, j = cell
+        return (i * s + 0.5 * s, j * s + 0.5 * s)
+
+    def _pose_tick_cb(self, _event):
+        """Mark the cell the robot is currently in as visited. Runs at
+        pose_tick_hz, independent of service activity, so we capture transit
+        cells too. Failures are silently ignored — the timer keeps firing."""
+        try:
+            pose = self._nav.get_robot_pose()
+        except Exception:
+            return
+        if pose is None:
+            return
+        cell = self._world_to_cell(pose[0], pose[1])
+        with self._visited_lock:
+            self._visited.add(cell)
 
     def _rotate_to_yaw(self, target_yaw: float) -> bool:
         """Rotate in place to face target_yaw (world frame) using cmd_vel. Returns True on success."""
