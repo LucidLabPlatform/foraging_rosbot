@@ -212,6 +212,107 @@ class RandomWalkServer:
         with self._visited_lock:
             self._visited.add(cell)
 
+    def _mark_unreachable(self, cell) -> None:
+        """Ban a cell from selection for unreachable_cooldown_s seconds."""
+        until = rospy.Time.now() + rospy.Duration(self._unreachable_cooldown_s)
+        with self._visited_lock:
+            self._unreachable[cell] = until
+
+    def _can_plan_to(self, goal_x: float, goal_y: float) -> bool:
+        """Lightweight reachability pre-check via /move_base/make_plan, without
+        the cancel+sleep dance _is_goal_reachable does (the explorer only calls
+        this between goals, so no in-flight goal needs cancelling)."""
+        try:
+            pose = self._nav.get_robot_pose()
+        except Exception:
+            return True
+        if pose is None:
+            return True
+
+        start = PoseStamped()
+        start.header.frame_id = "map"
+        start.header.stamp = rospy.Time.now()
+        start.pose.position.x = pose[0]
+        start.pose.position.y = pose[1]
+        start.pose.orientation.w = 1.0
+
+        goal = PoseStamped()
+        goal.header.frame_id = "map"
+        goal.header.stamp = rospy.Time.now()
+        goal.pose.position.x = goal_x
+        goal.pose.position.y = goal_y
+        goal.pose.orientation.w = 1.0
+
+        req = GetPlanRequest()
+        req.start = start
+        req.goal = goal
+        req.tolerance = 0.25
+
+        try:
+            resp = self._make_plan(req)
+            return len(resp.plan.poses) > 0
+        except rospy.ServiceException as e:
+            rospy.logwarn("[explorer] make_plan service error: %s — assuming reachable", e)
+            return True
+
+    def _pick_next_cell(self):
+        """Choose the next cell to drive to.
+
+        Returns (target_x, target_y, target_yaw, cell) where cell = (i, j),
+        or None if no eligible cell is found within search_radius_max_cells.
+
+        Search expands the Chebyshev radius from search_radius_cells up to
+        search_radius_max_cells. At each radius we generate all candidate
+        cells, filter by visited / unreachable / costmap-free, sort by
+        Euclidean distance from the robot (with (j, i) ascending tie-break
+        for determinism), and take the first one that move_base can plan to.
+        """
+        try:
+            pose = self._nav.get_robot_pose()
+        except Exception:
+            return None
+        if pose is None:
+            return None
+        rx, ry, _ = pose
+        robot_cell = self._world_to_cell(rx, ry)
+
+        # Snapshot visited / unreachable so we don't hold the lock through
+        # candidate scoring.
+        now = rospy.Time.now()
+        with self._visited_lock:
+            visited = set(self._visited)
+            # Drop expired bans so the dict doesn't grow without bound.
+            self._unreachable = {
+                c: t for c, t in self._unreachable.items() if t > now
+            }
+            banned = set(self._unreachable.keys())
+
+        for radius in range(self._search_radius_cells, self._search_radius_max_cells + 1):
+            candidates = []
+            for di in range(-radius, radius + 1):
+                for dj in range(-radius, radius + 1):
+                    if di == 0 and dj == 0:
+                        continue
+                    cell = (robot_cell[0] + di, robot_cell[1] + dj)
+                    if cell in visited or cell in banned:
+                        continue
+                    cx, cy = self._cell_to_world_center(cell)
+                    if not self._is_free(cx, cy):
+                        continue
+                    dist = math.hypot(cx - rx, cy - ry)
+                    candidates.append((dist, cell, cx, cy))
+
+            # Sort by distance, then (j, i) ascending so ties are deterministic.
+            candidates.sort(key=lambda t: (t[0], t[1][1], t[1][0]))
+
+            for dist, cell, cx, cy in candidates:
+                if not self._can_plan_to(cx, cy):
+                    continue
+                yaw = math.atan2(cy - ry, cx - rx)
+                return (cx, cy, yaw, cell)
+
+        return None
+
     def _rotate_to_yaw(self, target_yaw: float) -> bool:
         """Rotate in place to face target_yaw (world frame) using cmd_vel. Returns True on success."""
         rate = rospy.Rate(20)
