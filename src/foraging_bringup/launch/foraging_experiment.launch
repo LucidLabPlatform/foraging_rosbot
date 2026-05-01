@@ -1,7 +1,6 @@
 <launch>
   <!-- ===== Sweepable experiment parameters ===== -->
   <arg name="site_fidelity_rate" default="0.5"/>
-  <arg name="walk_sigma"         default="0"/>
   <arg name="step_size"          default="0.75"/>
   <arg name="explore_puck_pct"   default="0.5"/>
   <arg name="explore_corner_pct" default="0.67"/>
@@ -21,8 +20,7 @@
       <arg name="puck_stale_timeout" value="$(arg puck_stale_timeout)"/>
   </include>
 
-  <!-- Override random_walk_server CRW param -->
-  <param name="/random_walk_server/walk_sigma" value="$(arg walk_sigma)"/>
+  <!-- random_walk_server step size — aliased to ~cell_size_m by the explorer -->
   <param name="/random_walk_server/step_size" value="$(arg step_size)"/>
 
   <!-- Override move_base velocity limits -->
