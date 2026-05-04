@@ -26,7 +26,7 @@ import math
 import threading
 from foraging_msgs.msg import PuckRegistry, ArucoRegistry
 from foraging_msgs.srv import RandomWalkServerMessage, RandomWalkServerMessageResponse
-from geometry_msgs.msg import PoseStamped
+from geometry_msgs.msg import PoseStamped, Twist
 from nav_msgs.msg import OccupancyGrid
 from nav_msgs.srv import GetPlan, GetPlanRequest
 from move_base_client import MoveBaseClient
@@ -35,6 +35,17 @@ from move_base_client import MoveBaseClient
 STEP_SIZE_DEFAULT     = 0.5   # meters per step (legacy ~step_size; aliased to ~cell_size_m)
 STEP_TIMEOUT          = 15    # seconds — timeout for each move_base goal
 PAUSE_AFTER_STEP      = 2.5   # seconds to pause after each step to allow puck detection
+
+# ── In-place rotation (workaround for TPP min_vel_x > 0) ─────────────────────
+# planner_local.yaml sets min_vel_x=0.05, so TrajectoryPlannerROS cannot sample
+# pure-rotation trajectories (vx=0). With recovery_behavior_enabled=false in
+# move_base.yaml, the robot would sit forever if the goal requires turning
+# around. We rotate the robot toward the target yaw via direct /cmd_vel before
+# every move_base goal so the local planner only ever needs to drive forward.
+ANGULAR_SPEED         = 0.6   # rad/s for in-place rotation
+YAW_TOLERANCE         = 0.1   # rad — acceptable error when rotating to target yaw
+ROTATE_TIMEOUT        = 10.0  # seconds — max time to complete an in-place rotation
+SETTLE_AFTER_FAIL_S   = 0.5   # seconds for cancel to propagate before next make_plan
 
 # ── Cell-based explorer parameters ───────────────────────────────────────────
 # These drive the deterministic visited-grid explorer. The grid is anchored at
@@ -89,6 +100,10 @@ class RandomWalkServer:
         rospy.Subscriber("/aruco/registry", ArucoRegistry, self._aruco_registry_cb, queue_size=1)
         rospy.Subscriber("/move_base/global_costmap/costmap", OccupancyGrid,
                          self._costmap_cb, queue_size=1)
+
+        # cmd_vel publisher — used only for the pre-goal rotate-in-place step
+        # (TPP cannot pure-rotate; see ANGULAR_SPEED comment block above).
+        self._cmd_vel = rospy.Publisher("/cmd_vel", Twist, queue_size=1)
 
         # Navigation client (handles TF + move_base connection)
         self._nav = MoveBaseClient()
@@ -213,6 +228,50 @@ class RandomWalkServer:
         until = rospy.Time.now() + rospy.Duration(self._unreachable_cooldown_s)
         with self._visited_lock:
             self._unreachable[cell] = until
+
+    def _rotate_to_yaw(self, target_yaw: float) -> bool:
+        """Rotate the robot in place to face target_yaw (world frame) using
+        direct /cmd_vel publishes. Returns True on success, False on timeout
+        or shutdown.
+
+        Required because base_local_planner/TrajectoryPlannerROS is configured
+        with min_vel_x > 0 in this lab, which forbids pure-rotation
+        trajectories. Without this step, a move_base goal that requires
+        turning around produces no /cmd_vel output at all and the robot
+        stands still until our 15 s timeout fires.
+        """
+        rate = rospy.Rate(20)
+        deadline = rospy.Time.now() + rospy.Duration(ROTATE_TIMEOUT)
+        twist = Twist()
+
+        while not rospy.is_shutdown():
+            if rospy.Time.now() > deadline:
+                twist.angular.z = 0.0
+                self._cmd_vel.publish(twist)
+                rospy.logwarn("[explorer] rotate_to_yaw timed out after %.1fs",
+                              ROTATE_TIMEOUT)
+                return False
+
+            pose = self._nav.get_robot_pose()
+            if pose is None:
+                rate.sleep()
+                continue
+
+            _, _, current_yaw = pose
+            error = math.atan2(math.sin(target_yaw - current_yaw),
+                               math.cos(target_yaw - current_yaw))
+            if abs(error) < YAW_TOLERANCE:
+                twist.angular.z = 0.0
+                self._cmd_vel.publish(twist)
+                return True
+
+            twist.angular.z = ANGULAR_SPEED if error > 0 else -ANGULAR_SPEED
+            self._cmd_vel.publish(twist)
+            rate.sleep()
+
+        twist.angular.z = 0.0
+        self._cmd_vel.publish(twist)
+        return False
 
     def _can_plan_to(self, goal_x: float, goal_y: float) -> bool:
         """Lightweight reachability pre-check via /move_base/make_plan. The
@@ -384,6 +443,16 @@ class RandomWalkServer:
                 "[explorer] step %d: target cell %s at (%.2f, %.2f), yaw=%.2f rad",
                 step, cell, target_x, target_y, target_yaw,
             )
+
+            # Rotate first so move_base only ever has to drive forward.
+            # If rotation fails (e.g. TF blip), still try the goal — move_base
+            # may succeed if the robot happens to be close to aligned already.
+            if not self._rotate_to_yaw(target_yaw):
+                rospy.logdebug(
+                    "[explorer] pre-goal rotation failed for cell %s — sending goal anyway",
+                    cell,
+                )
+
             success = self._nav.go_to(target_x, target_y, yaw=target_yaw, timeout=STEP_TIMEOUT)
             if success:
                 rospy.loginfo(
@@ -397,6 +466,10 @@ class RandomWalkServer:
                     cell, self._unreachable_cooldown_s,
                 )
                 self._mark_unreachable(cell)
+                # Let the implicit cancel from go_to propagate before we hit
+                # /move_base/make_plan again on the next step, otherwise
+                # make_plan returns an empty error.
+                rospy.sleep(SETTLE_AFTER_FAIL_S)
 
         # rospy shutdown before thresholds met.
         return RandomWalkServerMessageResponse(done=False)
