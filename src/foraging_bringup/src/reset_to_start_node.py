@@ -15,7 +15,7 @@ def clamp(value: float, low: float, high: float) -> float:
     return max(low, min(high, value))
 
 
-class GoToHardcodedGoal:
+class GoToGoal:
     def __init__(self):
         rospy.init_node("reset_to_start_node")
 
@@ -38,15 +38,16 @@ class GoToHardcodedGoal:
         # If heading error is large, rotate first
         self.heading_threshold = rospy.get_param("~heading_threshold", 0.30)
 
-        # Hardcoded goal pose
-        self.goal_x = 2.987614393234253
-        self.goal_y = 1.837099552154541
-        self.goal_z = 0.431474506855011
-
-        self.goal_qx = -0.024460850283503532
-        self.goal_qy = 0.011780226603150368
-        self.goal_qz = 0.9265028834342957
-        self.goal_qw = -0.37530723214149475
+        # Goal pose — overridable via roslaunch args / private rosparams.
+        # Defaults match the previous hardcoded values so behaviour is unchanged
+        # when no args are supplied.
+        self.goal_x  = rospy.get_param("~goal_x",  2.987614393234253)
+        self.goal_y  = rospy.get_param("~goal_y",  1.837099552154541)
+        self.goal_z  = rospy.get_param("~goal_z",  0.431474506855011)
+        self.goal_qx = rospy.get_param("~goal_qx", -0.024460850283503532)
+        self.goal_qy = rospy.get_param("~goal_qy", 0.011780226603150368)
+        self.goal_qz = rospy.get_param("~goal_qz", 0.9265028834342957)
+        self.goal_qw = rospy.get_param("~goal_qw", -0.37530723214149475)
 
         _, _, self.goal_yaw = euler_from_quaternion(
             [self.goal_qx, self.goal_qy, self.goal_qz, self.goal_qw]
@@ -66,7 +67,7 @@ class GoToHardcodedGoal:
         rospy.on_shutdown(self.stop_robot)
 
         rospy.loginfo(
-            f"Hardcoded goal loaded: x={self.goal_x:.3f}, y={self.goal_y:.3f}, yaw={self.goal_yaw:.3f}"
+            f"Goal loaded: x={self.goal_x:.3f}, y={self.goal_y:.3f}, yaw={self.goal_yaw:.3f}"
         )
 
     def pose_callback(self, msg: PoseStamped):
@@ -176,7 +177,7 @@ class GoToHardcodedGoal:
 
 if __name__ == "__main__":
     try:
-        controller = GoToHardcodedGoal()
+        controller = GoToGoal()
         controller.run()
     except rospy.ROSInterruptException:
         pass
