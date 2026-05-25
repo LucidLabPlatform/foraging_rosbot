@@ -16,7 +16,7 @@ import rospy
 import tf
 from actionlib_msgs.msg import GoalID, GoalStatus, GoalStatusArray
 from move_base_msgs.msg import MoveBaseActionGoal, MoveBaseActionResult, MoveBaseGoal
-from geometry_msgs.msg import Quaternion
+from geometry_msgs.msg import Quaternion, Twist
 
 _STATUS_NAMES = {
     GoalStatus.PENDING:   "PENDING",
@@ -27,6 +27,17 @@ _STATUS_NAMES = {
     GoalStatus.REJECTED:  "REJECTED",
     GoalStatus.LOST:      "LOST",
 }
+
+# ── In-place rotation (workaround for TPP min_vel_x > 0) ─────────────────────
+# planner_local.yaml sets min_vel_x=0.05, so TrajectoryPlannerROS cannot sample
+# pure-rotation trajectories (vx=0). With recovery_behavior_enabled=false in
+# move_base.yaml, the robot would sit forever if the goal requires turning
+# around. We rotate the robot toward the approach heading via direct /cmd_vel
+# before every move_base goal so the local planner only ever needs to drive
+# forward.
+_ANGULAR_SPEED  = 0.6   # rad/s for in-place rotation
+_YAW_TOLERANCE  = 0.1   # rad — acceptable error when rotating to target yaw
+_ROTATE_TIMEOUT = 10.0  # seconds — max time to complete an in-place rotation
 
 
 class MoveBaseClient:
@@ -48,6 +59,7 @@ class MoveBaseClient:
             "/move_base/goal", MoveBaseActionGoal, queue_size=1)
         self._cancel_pub = rospy.Publisher(
             "/move_base/cancel", GoalID, queue_size=1)
+        self._cmd_vel = rospy.Publisher("/cmd_vel", Twist, queue_size=1)
 
         # State tracking
         self._current_goal_id = None
@@ -118,8 +130,53 @@ class MoveBaseClient:
                      server_timeout)
         return False
 
+    def _rotate_to_yaw(self, target_yaw):
+        """Rotate the robot in place to face target_yaw (map frame) using
+        direct /cmd_vel publishes. Returns True on success, False on timeout
+        or shutdown. See the module-level comment block above _ANGULAR_SPEED
+        for why this exists."""
+        rate = rospy.Rate(20)
+        deadline = rospy.Time.now() + rospy.Duration(_ROTATE_TIMEOUT)
+        twist = Twist()
+
+        while not rospy.is_shutdown():
+            if rospy.Time.now() > deadline:
+                twist.angular.z = 0.0
+                self._cmd_vel.publish(twist)
+                rospy.logwarn("[nav] rotate_to_yaw timed out after %.1fs",
+                              _ROTATE_TIMEOUT)
+                return False
+
+            pose = self.get_robot_pose()
+            if pose is None:
+                rate.sleep()
+                continue
+
+            _, _, current_yaw = pose
+            error = math.atan2(math.sin(target_yaw - current_yaw),
+                               math.cos(target_yaw - current_yaw))
+            if abs(error) < _YAW_TOLERANCE:
+                twist.angular.z = 0.0
+                self._cmd_vel.publish(twist)
+                return True
+
+            twist.angular.z = _ANGULAR_SPEED if error > 0 else -_ANGULAR_SPEED
+            self._cmd_vel.publish(twist)
+            rate.sleep()
+
+        twist.angular.z = 0.0
+        self._cmd_vel.publish(twist)
+        return False
+
     def go_to(self, x, y, yaw=0.0, timeout=30.0):
         """Navigate to (x, y, yaw) in map frame. Returns True on success."""
+        # Pre-rotate toward the approach heading before handing off to
+        # move_base — TPP can't pure-rotate (see module-level comment).
+        pose = self.get_robot_pose()
+        if pose is not None:
+            approach_yaw = math.atan2(y - pose[1], x - pose[0])
+            self._rotate_to_yaw(approach_yaw)
+
         q = tf.transformations.quaternion_from_euler(0, 0, yaw)
 
         goal_id = "goal_%s" % uuid.uuid4().hex[:8]
