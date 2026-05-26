@@ -434,7 +434,7 @@ class TidyRoom:
         dx = corner.x - robot_pos[0]
         dy = corner.y - robot_pos[1]
         dist = math.sqrt(dx * dx + dy * dy)
-        ux, uy = dx / dist, dy / dist
+        ux, uy = (dx / dist, dy / dist) if dist > 0 else (0, 0)
 
         goal_x = corner.x - ux * CORNER_APPROACH_DIST
         goal_y = corner.y - uy * CORNER_APPROACH_DIST
