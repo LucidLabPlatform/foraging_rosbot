@@ -38,6 +38,15 @@ class GoToGoal:
         # If heading error is large, rotate first
         self.heading_threshold = rospy.get_param("~heading_threshold", 0.30)
 
+        # OptiTrack -> robot-frame yaw correction.
+        # OptiTrack reports the rigid body's local +X axis angle in world frame.
+        # If the rigid body's "forward" is rotated/mirrored vs the robot's physical
+        # forward, the controller's heading_error never zeroes out and the robot
+        # circles. effective_yaw = yaw_sign * raw_yaw + yaw_offset, applied to
+        # both current pose and goal pose so final_yaw_error stays consistent.
+        self.yaw_offset = rospy.get_param("~yaw_offset", 0.0)
+        self.yaw_sign   = rospy.get_param("~yaw_sign",   1.0)
+
         # Goal pose — overridable via roslaunch args / private rosparams.
         # Defaults match the previous hardcoded values so behaviour is unchanged
         # when no args are supplied.
@@ -49,9 +58,10 @@ class GoToGoal:
         self.goal_qz = rospy.get_param("~goal_qz", 0.9265028834342957)
         self.goal_qw = rospy.get_param("~goal_qw", -0.37530723214149475)
 
-        _, _, self.goal_yaw = euler_from_quaternion(
+        _, _, raw_goal_yaw = euler_from_quaternion(
             [self.goal_qx, self.goal_qy, self.goal_qz, self.goal_qw]
         )
+        self.goal_yaw = wrap_angle(self.yaw_sign * raw_goal_yaw + self.yaw_offset)
 
         self.current_pose = None
         self.goal_reached = False
@@ -87,8 +97,8 @@ class GoToGoal:
 
     def get_yaw_from_pose(self, pose_msg: PoseStamped) -> float:
         q = pose_msg.pose.orientation
-        _, _, yaw = euler_from_quaternion([q.x, q.y, q.z, q.w])
-        return yaw
+        _, _, raw_yaw = euler_from_quaternion([q.x, q.y, q.z, q.w])
+        return wrap_angle(self.yaw_sign * raw_yaw + self.yaw_offset)
 
     def run(self):
         rate = rospy.Rate(20)

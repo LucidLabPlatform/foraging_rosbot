@@ -23,6 +23,10 @@
     <arg name="max_linear"  default="0.25"/>
     <arg name="max_angular" default="1.0"/>
 
+    <!-- OptiTrack -> robot-frame yaw correction (see node header) -->
+    <arg name="yaw_offset"  default="0.0"/>
+    <arg name="yaw_sign"    default="1.0"/>
+
     <node name="reset_to_start" pkg="foraging_bringup" type="reset_to_start_node.py" output="screen">
         <param name="goal_x"            value="$(arg goal_x)"/>
         <param name="goal_y"            value="$(arg goal_y)"/>
@@ -38,5 +42,7 @@
         <param name="k_final_yaw"       value="$(arg k_final_yaw)"/>
         <param name="max_linear"        value="$(arg max_linear)"/>
         <param name="max_angular"       value="$(arg max_angular)"/>
+        <param name="yaw_offset"        value="$(arg yaw_offset)"/>
+        <param name="yaw_sign"          value="$(arg yaw_sign)"/>
     </node>
 </launch>
